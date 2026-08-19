@@ -1,0 +1,348 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* Dark is the default room. `.light` is the opt-in override, so the workspace
+   renders dark before hydration and with JavaScript disabled. */
+@custom-variant dark (&:is(.dark *));
+@custom-variant light (&:is(.light *));
+
+/* =========================================================================
+   LIGHT TABLE — raw tokens
+   The workspace is a dark room; the document is a lit paper sheet on the
+   table. Organizing law: IF IT IS COLOURED, IT IS A CITATION.
+   ========================================================================= */
+
+/* --- ROOM: dark (default) ------------------------------------------------ */
+:root,
+.dark {
+  --room: oklch(18.38% 0.0088 240.43); /* #0F1316  workspace background     */
+  --surface: oklch(21.87% 0.0109 242.25); /* #161B1F  rail, conversation, cards */
+  --surface-raised: oklch(25.56% 0.0138 239.19); /* #1D2429  hover, popovers, inputs  */
+  --edge: oklch(93.67% 0.012 223.53 / 0.1); /* #E2ECF0 @10% — 1px hairline       */
+  --edge-strong: oklch(93.67% 0.012 223.53 / 0.18); /* #E2ECF0 @18%                      */
+  --text: oklch(93.33% 0.0076 228.86); /* #E4EAED                           */
+  --text-muted: oklch(70.89% 0.0162 235.49); /* #98A3AA                           */
+  --text-faint: oklch(55.56% 0.0171 235.61); /* #6A757C                           */
+}
+
+/* --- ROOM: light --------------------------------------------------------- */
+.light {
+  --room: oklch(93.12% 0.0042 157.17); /* #E6E9E7 */
+  --surface: oklch(96.54% 0.0025 165.08); /* #F2F4F3 */
+  --surface-raised: oklch(100% 0 0); /* #FFFFFF */
+  --edge: oklch(87.67% 0.0077 164.91); /* #D2D8D5 */
+  --edge-strong: oklch(81.6% 0.0104 164.81); /* #BDC5C1 */
+  --text: oklch(20.57% 0.0073 229.27); /* #14181A */
+  --text-muted: oklch(49.36% 0.0167 238.3); /* #59636A */
+  --text-faint: oklch(66.07% 0.0156 238.14); /* #8A949B */
+}
+
+/* --- PAPER (INVARIANT) ---------------------------------------------------
+   Declared once, outside any theme block. The page is always paper — these
+   four values are identical in the dark room and the light room. Never
+   redefine them under `.light` or `.dark`.
+   ------------------------------------------------------------------------- */
+:root {
+  --paper: oklch(98.8% 0.0041 91.45); /* #FCFBF8  warm white — NOT cream */
+  --paper-edge: oklch(90.96% 0.0125 91.53); /* #E4E1D8 */
+  --paper-text: oklch(20.77% 0.005 248.07); /* #16181A */
+  --paper-text-muted: oklch(48.24% 0.009 241.81); /* #5A5F63 */
+
+  /* --- HIGHLIGHTER INKS ---------------------------------------------------
+     The entire chromatic vocabulary of the application. One ink is assigned
+     per source document in a conversation, cycling in this order. Inks appear
+     on the page and on the chips that point at the page, and nowhere else.
+     ---------------------------------------------------------------------- */
+  --ink-citrine: oklch(82.54% 0.1288 88.53); /* #E8C15A */
+  --ink-rose: oklch(73.84% 0.1168 5.24); /* #E88AA0 */
+  --ink-jade: oklch(76.25% 0.1065 161.16); /* #6FC79C */
+  --ink-azure: oklch(73.39% 0.1042 249.41); /* #74AEE8 */
+
+  /* --- SYSTEM STATES ------------------------------------------------------
+     Chrome only. Never on paper, never confused with the inks. --warn is
+     amber-orange, deliberately not citrine yellow.
+     ---------------------------------------------------------------------- */
+  --ok: oklch(71.58% 0.1124 160.81); /* #5BB98C */
+  --warn: oklch(70.15% 0.133 61.96); /* #D98A3C */
+  --danger: oklch(66.18% 0.1509 27.26); /* #E0695E */
+
+  /* --- DEPTH: exactly two shadows, both physically justified -------------- */
+  --shadow-sheet: 0 1px 2px oklch(0% 0 0 / 0.3), 0 10px 28px -8px oklch(0% 0 0 / 0.45);
+  --shadow-overlay: 0 2px 8px oklch(0% 0 0 / 0.32), 0 12px 36px -10px oklch(0% 0 0 / 0.5);
+}
+
+/* =========================================================================
+   TAILWIND THEME
+   ========================================================================= */
+
+@theme inline {
+  /* The colour namespace is `inline` so every utility resolves through the raw
+     token and follows the room theme at runtime. */
+  --color-room: var(--room);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-edge: var(--edge);
+  --color-edge-strong: var(--edge-strong);
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-text-faint: var(--text-faint);
+
+  --color-paper: var(--paper);
+  --color-paper-edge: var(--paper-edge);
+  --color-paper-text: var(--paper-text);
+  --color-paper-text-muted: var(--paper-text-muted);
+
+  --color-ink-citrine: var(--ink-citrine);
+  --color-ink-rose: var(--ink-rose);
+  --color-ink-jade: var(--ink-jade);
+  --color-ink-azure: var(--ink-azure);
+
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+}
+
+@theme {
+  /* --- TYPOGRAPHY: three faces, one role boundary — chrome / page / numbers */
+  --font-sans: var(--font-public-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-source-serif), ui-serif, Georgia, serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
+  /* Marketing headlines are set in the sans face. That inversion is
+     deliberate: the serif belongs to documents, not to marketing. */
+  --font-heading: var(--font-sans);
+
+  --text-display: clamp(38px, 5.5vw, 60px);
+  --text-display--line-height: 1.06;
+  --text-display--font-weight: 600;
+  --text-display--letter-spacing: -0.015em;
+
+  --text-page-title: 20px;
+  --text-page-title--line-height: 1.3;
+  --text-page-title--font-weight: 600;
+
+  --text-section-title: 15px;
+  --text-section-title--line-height: 1.4;
+  --text-section-title--font-weight: 600;
+
+  --text-body: 14px; /* interface default */
+  --text-body--line-height: 1.55;
+  --text-body--font-weight: 400;
+
+  --text-body-sm: 13px;
+  --text-body-sm--line-height: 1.5;
+
+  /* Reading size inside the paper sheet — deliberately larger. */
+  --text-document: 17px;
+  --text-document--line-height: 1.65;
+  --text-document--font-weight: 400;
+
+  --text-mono-sm: 12px;
+  --text-mono-sm--line-height: 1.45;
+  --text-mono-xs: 11px;
+  --text-mono-xs--line-height: 1.45;
+
+  /* --- SHAPE: reset the namespace so ONLY these radii exist -------------- */
+  --radius-*: initial;
+  --radius-sheet: 2px; /* the paper sheet       */
+  --radius-control: 4px; /* buttons, inputs, tabs */
+  --radius-panel: 8px; /* panels, cards         */
+  --radius-dialog: 12px; /* dialogs, drawers      */
+  --radius-chip: 999px; /* chips, avatars        */
+  /* shadcn/ui reads the sm..4xl ladder; map it onto the scale above. */
+  --radius-sm: 4px;
+  --radius-md: 4px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 12px;
+  --radius-3xl: 12px;
+  --radius-4xl: 12px;
+  --radius: 8px;
+
+  /* --- SPACING: the 8-grid (4 8 12 16 20 24 32 40 56 80) ----------------- */
+  --spacing: 4px;
+
+  /* --- DEPTH: reset the namespace so EXACTLY two shadows exist ----------- */
+  --shadow-*: initial;
+  --inset-shadow-*: initial;
+  --drop-shadow-*: initial;
+  --shadow-sheet: 0 1px 2px oklch(0% 0 0 / 0.3), 0 10px 28px -8px oklch(0% 0 0 / 0.45);
+  --shadow-overlay: 0 2px 8px oklch(0% 0 0 / 0.32), 0 12px 36px -10px oklch(0% 0 0 / 0.5);
+
+  /* --- MOTION ------------------------------------------------------------ */
+  --ease-ink: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* =========================================================================
+   shadcn/ui COMPATIBILITY LAYER
+   shadcn components speak background/foreground/primary/border/ring. Map that
+   vocabulary onto Light Table so every component inherits the design system.
+   Everything here is MONOCHROME by construction — chrome is never coloured.
+   The one exception is --destructive, which is a system state, not an ink.
+   ========================================================================= */
+@theme inline {
+  --color-background: var(--room);
+  --color-foreground: var(--text);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--surface-raised);
+  --color-popover-foreground: var(--text);
+  --color-primary: var(--text);
+  --color-primary-foreground: var(--room);
+  --color-secondary: var(--surface-raised);
+  --color-secondary-foreground: var(--text);
+  --color-muted: var(--surface);
+  --color-muted-foreground: var(--text-muted);
+  --color-accent: var(--surface-raised);
+  --color-accent-foreground: var(--text);
+  --color-destructive: var(--danger);
+  --color-border: var(--edge);
+  --color-input: var(--edge-strong);
+  --color-ring: var(--text);
+  --color-sidebar: var(--surface);
+  --color-sidebar-foreground: var(--text);
+  --color-sidebar-primary: var(--text);
+  --color-sidebar-primary-foreground: var(--room);
+  --color-sidebar-accent: var(--surface-raised);
+  --color-sidebar-accent-foreground: var(--text);
+  --color-sidebar-border: var(--edge);
+  --color-sidebar-ring: var(--text);
+}
+
+/* =========================================================================
+   BASE
+   ========================================================================= */
+@layer base {
+  * {
+    border-color: var(--edge);
+  }
+
+  html {
+    font-family: var(--font-sans);
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--room);
+    color: var(--text);
+    font-size: var(--text-body);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Every number and identifier is set in the mono face, tabular. */
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* FOCUS: a 2px ring on every interactive element. Never removed. */
+  :focus-visible {
+    outline: 2px solid var(--text);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* The paper sheet: the only lifted content in the application. */
+  .paper-sheet {
+    background-color: var(--paper);
+    color: var(--paper-text);
+    border: 1px solid var(--paper-edge);
+    border-radius: var(--radius-sheet);
+    box-shadow: var(--shadow-sheet);
+  }
+
+  /* Focus is surface-aware — a dark ring on the light sheet. */
+  .paper-sheet :focus-visible {
+    outline-color: var(--paper-text);
+  }
+
+  /* Document body text lives inside the paper sheet only. */
+  .paper-body {
+    font-family: var(--font-serif);
+    font-size: var(--text-document);
+    line-height: 1.65;
+  }
+
+  /* A citation on the page: a 26% alpha band plus a 2px full-strength
+     underline. `--ink` is set per source document by the component. */
+  .ink-highlight {
+    background-color: color-mix(in oklch, var(--ink) 26%, transparent);
+    box-shadow: inset 0 -2px 0 0 var(--ink);
+    border-radius: 1px;
+    padding-block: 1px;
+  }
+
+  /* A citation chip in the conversation: 12% tint, 1px ink border. */
+  .ink-chip {
+    background-color: color-mix(in oklch, var(--ink) 12%, transparent);
+    border: 1px solid var(--ink);
+    border-radius: var(--radius-chip);
+    font-family: var(--font-mono);
+    font-size: var(--text-mono-xs);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* label — 11px / 600 / +0.07em / uppercase / --text-faint */
+@utility label {
+  font-size: 11px;
+  line-height: 1.4;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* Numbers, scores, ids, latencies. */
+@utility num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* MOTION: streaming text is the one continuous animation. A citation highlight
+   inks in with a 220ms left-to-right wipe; Evidence Rail marks fade in at
+   180ms. Nothing else animates. */
+@keyframes ink-in {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+@keyframes mark-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@utility animate-ink-in {
+  animation: ink-in 220ms var(--ease-ink) both;
+}
+
+@utility animate-mark-in {
+  animation: mark-in 180ms linear both;
+}
+
+/* prefers-reduced-motion: highlights appear instantly — no wipe, no caret
+   blink. Streaming still streams: it is content, not decoration. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
