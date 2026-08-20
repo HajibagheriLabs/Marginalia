@@ -1,19 +1,19 @@
 /**
- * Typed, validated environment.
+ * Server environment — every secret in the project.
  *
- * Both schemas are parsed at module load, so a missing or malformed variable
- * fails the process at boot rather than at the first request that needs it.
+ * Parsed at module load, so a missing or malformed variable fails the process
+ * at boot rather than at the first request that needs it.
  *
- * Two schemas, because they sit on different sides of a trust boundary:
- *   - `serverSchema` holds secrets and is parsed only on the server.
- *   - `clientSchema` holds NEXT_PUBLIC_* values that Next.js inlines into the
- *     browser bundle. Those must be read as literal `process.env.FOO` property
- *     accesses for the inlining to happen — never `process.env[someKey]`.
- *
- * Import `env` from Server Components, Server Actions, and route handlers.
- * Import `publicEnv` from anywhere, including Client Components.
+ * Import `env` from Server Components, Server Actions, and route handlers
+ * ONLY. Client Components import `publicEnv` from `./env.public` instead —
+ * that module is kept separate precisely so importing a public value can never
+ * drag this one into the browser bundle.
  */
 import { z } from "zod";
+
+import { optional, parseOrThrow } from "./env.public";
+
+export { publicEnv } from "./env.public";
 
 /** Postgres connection strings are URLs, but not http(s) ones. */
 const postgresUrl = z
@@ -37,7 +37,10 @@ const serverSchema = z
     // Better Auth — email + password. One user owns their documents.
     BETTER_AUTH_SECRET: z
       .string()
-      .min(32, "must be at least 32 characters; generate with `openssl rand -base64 32`"),
+      .min(
+        32,
+        "must be at least 32 characters; generate with `openssl rand -base64 32`",
+      ),
     BETTER_AUTH_URL: z.url(),
 
     // Vercel Blob. Uploads go client-side with a short-lived token minted from
@@ -58,11 +61,11 @@ const serverSchema = z
     // embedding spaces are never mixed.
     EMBEDDING_PROVIDER: z.enum(["openai"]).default("openai"),
     EMBEDDING_MODEL: z.string().min(1).default("text-embedding-3-small"),
-    OPENAI_API_KEY: z.string().min(1).optional(),
+    OPENAI_API_KEY: optional(z.string().min(1)),
 
     // Optional seeded account, so a reviewer can sign in without registering.
-    DEMO_USER_EMAIL: z.email().optional(),
-    DEMO_USER_PASSWORD: z.string().min(8).optional(),
+    DEMO_USER_EMAIL: optional(z.email()),
+    DEMO_USER_PASSWORD: optional(z.string().min(8)),
   })
   .superRefine((value, ctx) => {
     if (value.EMBEDDING_PROVIDER === "openai" && !value.OPENAI_API_KEY) {
@@ -74,46 +77,19 @@ const serverSchema = z
     }
   });
 
-const clientSchema = z.object({
-  NEXT_PUBLIC_APP_URL: z.url(),
-});
-
 type ServerEnv = z.infer<typeof serverSchema>;
-type ClientEnv = z.infer<typeof clientSchema>;
-
-/** Turn a ZodError into something readable in a terminal, then throw. */
-function parseOrThrow<T>(
-  scope: string,
-  schema: z.ZodType<T>,
-  source: unknown,
-): T {
-  const result = schema.safeParse(source);
-  if (result.success) return result.data;
-
-  const lines = result.error.issues.map(
-    (issue) => `  ${issue.path.join(".") || "(root)"}: ${issue.message}`,
-  );
-  throw new Error(
-    `Invalid ${scope} environment variables:\n${lines.join("\n")}\n\n` +
-      "Copy .env.example to .env.local and fill in the missing values.",
-  );
-}
-
-/** Safe to read from anywhere, including Client Components. */
-export const publicEnv: ClientEnv = parseOrThrow("public", clientSchema, {
-  NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
-});
 
 /**
- * Server-only environment. Guarded rather than lazily proxied: if this module
- * is ever pulled into a client bundle the failure is loud and immediate, which
- * is what you want from a file that holds every secret in the project.
+ * Guarded rather than lazily proxied: if this module is ever pulled into a
+ * client bundle the failure is loud and immediate, which is what you want from
+ * a file that holds every secret in the project.
  */
 export const env: ServerEnv = (() => {
   if (typeof window !== "undefined") {
     throw new Error(
       "src/lib/env.ts was imported into the browser bundle. Server environment " +
-        "variables are not available to Client Components — import publicEnv instead.",
+        "variables are not available to Client Components — import publicEnv " +
+        "from @/lib/env.public instead.",
     );
   }
   return parseOrThrow("server", serverSchema, process.env);

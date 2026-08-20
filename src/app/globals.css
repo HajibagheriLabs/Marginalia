@@ -289,6 +289,23 @@
   }
 }
 
+/* FOCUS, enforced.
+   Declared OUTSIDE any @layer on purpose: unlayered rules beat every Tailwind
+   layer, so a component that ships `outline-none` — several shadcn primitives
+   do — cannot delete the focus ring. The spec is a 2px ring on every
+   interactive element, never removed, and surface-aware.
+   Add `focus-ring` to any control that fights back. */
+.focus-ring:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+/* On the sheet the ring switches to the paper ink, since --text is a room
+   colour and would vanish against warm white. */
+.paper-sheet .focus-ring:focus-visible {
+  outline-color: var(--paper-text);
+}
+
 /* label — 11px / 600 / +0.07em / uppercase / --text-faint */
 @utility label {
   font-size: 11px;
