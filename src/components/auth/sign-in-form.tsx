@@ -25,7 +25,8 @@ export function SignInForm() {
   // Only ever a same-origin path, never an absolute URL — an open redirect
   // here would hand an attacker a credible-looking phishing link.
   const rawNext = params.get("next");
-  const next = rawNext?.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/";
+  const next =
+    rawNext?.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/app";
 
   const justReset = params.get("reset") === "1";
 

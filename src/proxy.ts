@@ -48,7 +48,7 @@ export function proxy(request: NextRequest) {
   );
 
   if (hasSessionCookie && isAuthRoute) {
-    return NextResponse.redirect(new URL("/", request.url));
+    return NextResponse.redirect(new URL("/app", request.url));
   }
 
   const isPublic = PUBLIC_ROUTES.some(

@@ -322,6 +322,25 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The `label` style, re-tinted for paper. The `label` utility above resolves to
+   a ROOM token, which has no business on the sheet. */
+@utility paper-label {
+  font-size: 11px;
+  line-height: 1.4;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--paper-text-muted);
+}
+
+/* A comfortable reading measure for continuous prose: assistant answers in the
+   conversation pane and body text on the sheet. `ch` is relative to the current
+   font, so this lands near 66 characters at 14px sans and again at 17px serif —
+   the same measure in two type sizes, which is the point. */
+@utility measure {
+  max-inline-size: 68ch;
+}
+
 /* MOTION: streaming text is the one continuous animation. A citation highlight
    inks in with a 220ms left-to-right wipe; Evidence Rail marks fade in at
    180ms. Nothing else animates. */

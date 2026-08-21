@@ -1,6 +1,8 @@
 import type { CSSProperties } from "react";
+import Link from "next/link";
 
 import { ThemeToggle } from "@/components/theme-toggle";
+import { Button } from "@/components/ui/button";
 import { APP_NAME, APP_TAGLINE } from "@/lib/brand";
 
 /**
@@ -28,7 +30,12 @@ export default function Home() {
           <h1 className="max-w-[16ch] text-display font-sans">{APP_NAME}</h1>
           <p className="max-w-[52ch] text-body text-text-muted">{APP_TAGLINE}</p>
         </div>
-        <ThemeToggle />
+        <div className="flex shrink-0 items-center gap-2">
+          <ThemeToggle />
+          <Button asChild>
+            <Link href="/app">Open the workspace</Link>
+          </Button>
+        </div>
       </header>
 
       <div className="grid flex-1 gap-6 lg:grid-cols-[minmax(0,400px)_minmax(0,1fr)]">

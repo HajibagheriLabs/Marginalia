@@ -54,9 +54,9 @@ export function AuthNotice({ children }: { children: React.ReactNode }) {
 /**
  * A labelled input.
  *
- * shadcn's Input ships a 3px translucent ring and an 8px radius. Light Table
- * specifies a 2px ring and a 4px radius on controls, so both are overridden
- * here rather than at every call site.
+ * The Input primitive already carries the Light Table radius, hairline, and
+ * focus ring — the only thing set here is the taller 36px height these forms
+ * use, since an auth field is the primary control on its page.
  */
 export function AuthField({
   id,
@@ -76,11 +76,7 @@ export function AuthField({
       </Label>
       <Input
         id={id}
-        className={cn(
-          "focus-ring h-9 rounded-control border-edge-strong bg-surface-raised text-body text-text",
-          "focus-visible:border-edge-strong focus-visible:ring-0",
-          className,
-        )}
+        className={cn("h-9", className)}
         {...props}
       />
       {hint ? <p className="text-body-sm text-text-faint">{hint}</p> : null}

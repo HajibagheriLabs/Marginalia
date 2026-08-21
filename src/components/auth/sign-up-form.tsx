@@ -31,7 +31,7 @@ export function SignUpForm() {
       email,
       password: String(form.get("password")),
       // Where the link in the verification email lands.
-      callbackURL: "/",
+      callbackURL: "/app",
     });
 
     setPending(false);
