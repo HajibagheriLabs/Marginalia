@@ -2,6 +2,7 @@ import { FileText } from "lucide-react";
 
 import { EmptyState } from "@/components/empty-state";
 import { ErrorState } from "@/components/error-state";
+import { IngestProgress } from "@/components/ingest-progress";
 import { UploadDropzone } from "@/components/upload/upload-dropzone";
 import {
   DocumentActions,
@@ -10,7 +11,6 @@ import {
 import { PlaceholderPageContent } from "@/components/workspace/placeholder-page";
 import { ReadingSurface } from "@/components/workspace/reading-surface";
 import type { Document } from "@/db/schema";
-import { DOCUMENT_STATUS_META } from "@/lib/document-status";
 import { PLACEHOLDER_PAGE } from "@/lib/placeholder";
 import { formatBytes, formatPageCount } from "@/lib/upload";
 
@@ -21,9 +21,14 @@ import { formatBytes, formatPageCount } from "@/lib/upload";
  *
  * The whole pane is a drop target, which is the behaviour people try first.
  */
-export function ReadingPane({ document }: { document: Document }) {
-  const meta = DOCUMENT_STATUS_META[document.status];
-
+export function ReadingPane({
+  document,
+  indexedCount = 0,
+}: {
+  document: Document;
+  /** Passages already embedded, so the first paint already shows a number. */
+  indexedCount?: number;
+}) {
   return (
     <UploadDropzone>
       <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-edge bg-room pr-1.5 pl-4">
@@ -56,10 +61,23 @@ export function ReadingPane({ document }: { document: Document }) {
               action={<RetryIngestionButton documentId={document.id} />}
             />
           ) : (
-            <EmptyState
-              icon={FileText}
-              title={`This document is uploaded and ${meta.label.toLowerCase()}. Text extraction, chunking, and indexing arrive in the next step — it becomes readable and searchable then.`}
-            />
+            // Mid-pipeline. The stage and its counts, not a spinner — see
+            // IngestProgress for why the bar only appears while embedding.
+            <div className="flex w-full max-w-[480px] flex-col items-center gap-4">
+              <EmptyState
+                icon={FileText}
+                title="This document becomes readable and searchable once indexing finishes. You can close this tab — processing continues on the server."
+              />
+              <IngestProgress
+                documentId={document.id}
+                initial={{
+                  status: document.status,
+                  pageCount: document.pageCount,
+                  chunkCount: document.chunkCount,
+                  indexedCount,
+                }}
+              />
+            </div>
           )}
         </div>
       )}

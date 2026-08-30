@@ -68,6 +68,11 @@ export const documents = pgTable(
 
     tokenCount: integer("token_count"),
 
+    // How many chunks this document produced. Written by the chunking stage and
+    // used as the DENOMINATOR of the embedding progress readout — "240 of 612
+    // passages" needs a total that exists before the work is finished.
+    chunkCount: integer("chunk_count"),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -149,6 +154,24 @@ export const chunks = pgTable(
       .defaultNow(),
 
     /**
+     * When this chunk's vector was accepted by the vector store, or null.
+     *
+     * This one column does three jobs, which is why it is a timestamp on the
+     * chunk rather than a counter on the document:
+     *
+     *   - RESUMABILITY. The embedding stage selects only chunks where this is
+     *     null, so an invocation that runs out of time, or a document that
+     *     fails at passage 400 of 612, resumes at 400 rather than at zero.
+     *   - IDEMPOTENCE. Re-running a completed stage selects nothing and writes
+     *     nothing. There is no "have I already done this" flag to keep in sync
+     *     with reality, because this IS the record of what was done.
+     *   - PROGRESS. Counting non-null rows against `documents.chunk_count` is
+     *     the "240 of 612" readout, derived from the work itself rather than
+     *     from a separate progress field that could disagree with it.
+     */
+    indexedAt: timestamp("indexed_at", { withTimezone: true }),
+
+    /**
      * The lexical retrieval channel. GENERATED ALWAYS ... STORED, so it can
      * never drift from `text`.
      *
@@ -164,6 +187,13 @@ export const chunks = pgTable(
   (table) => [
     // Reading a document's chunks back in order.
     index("chunks_document_id_ordinal_idx").on(table.documentId, table.ordinal),
+    // The embedding stage's working query: this document's not-yet-indexed
+    // chunks, in order. Without this it is a scan of every chunk in the table
+    // on every batch of every document.
+    index("chunks_document_id_indexed_at_idx").on(
+      table.documentId,
+      table.indexedAt,
+    ),
     // The lexical half of hybrid retrieval.
     index("chunks_tsv_idx").using("gin", table.tsv),
   ],

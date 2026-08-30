@@ -6,8 +6,10 @@ import { DocumentListItem } from "@/components/document-list-item";
 import { EmptyState } from "@/components/empty-state";
 import { UploadButton } from "@/components/upload/upload-button";
 import { UploadHint } from "@/components/upload/upload-dropzone";
+import { LibraryRefresher } from "@/components/workspace/library-refresher";
 import { UserMenu } from "@/components/workspace/user-menu";
 import { APP_NAME } from "@/lib/brand";
+import { isInFlight } from "@/lib/document-status";
 import type { DocumentListItemRow } from "@/lib/documents";
 import { cn } from "@/lib/utils";
 
@@ -39,6 +41,11 @@ export function RailBody({
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
+      {/* Renders nothing. Re-fetches the rail while anything is still moving
+          through the pipeline, so a row never sits at a stale stage. */}
+      <LibraryRefresher
+        active={documents.some((item) => isInFlight(item.status))}
+      />
       <div
         className={cn(
           "flex h-12 shrink-0 items-center border-b border-edge",
@@ -99,6 +106,8 @@ export function RailBody({
               title={document.title}
               pageCount={document.pageCount}
               status={document.status}
+              chunkCount={document.chunkCount}
+              indexedCount={document.indexedCount}
               active={document.id === activeDocumentId}
               collapsed={collapsed}
             />

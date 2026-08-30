@@ -9,36 +9,32 @@ import { createLocalEmbeddingProvider } from "./local";
  * DOES THE AUGMENTED CHUNK ACTUALLY FIT IN THE MODEL?
  *
  * `CHUNKING.targetTokens` is denominated in cl100k tokens, because that is what
- * a fast synchronous tokenizer gives us at chunk time. The constraint it is
- * meant to satisfy is denominated in WordPiece tokens, because that is what
+ * a fast synchronous tokenizer gives us at chunk time. The constraint it exists
+ * to satisfy is denominated in WordPiece tokens, because that is what
  * bge-small-en-v1.5 actually encodes with, and its 512-token sequence limit is
  * hard. The two counts are related by an empirical ratio, not an identity, so
  * the budget rests on an assumption that has to be measured against the real
  * tokenizer or it is worth nothing.
  *
  * ───────────────────────────────────────────────────────────────────────────
- * WHAT THE MEASUREMENT SAYS, as of this commit
+ * WHAT THE MEASUREMENT SAYS
  *
  *   WordPiece-per-cl100k ratio, English legal prose ....... 1.19
- *   Context header for a deep three-level breadcrumb ...... 58 tokens
+ *   context header for a deep three-level breadcrumb ...... 58 tokens
+ *   worst augmented chunk at 300 / 380 / 70 .............. 462 / 512
  *
- *   target 350 / max 450 / min 80 ... worst augmented chunk 563 / 512  OVER
- *   target 300 / max 380 / min 70 ... worst augmented chunk 462 / 512  fits
+ * THE CEILING IS THE NUMBER THAT MEETS THE LIMIT, NOT THE TARGET. A stored
+ * chunk is not `targetTokens` long: the packer fills to `maxTokens`, the merge
+ * pass can add `minTokens` on top, and the overlap adds up to twice its own
+ * budget again. That is how an earlier 350/450/80 budget measured 563 and
+ * overshot while its target still looked comfortably small — which is exactly
+ * the kind of arithmetic that is convincing on paper and wrong in practice, and
+ * exactly why this file exists.
  *
- * The configured budget OVERSHOOTS. The reason is that a stored chunk is not
- * `targetTokens` long: the packer may fill to `maxTokens`, the merge pass may
- * add up to `minTokens` on top of that, and the overlap adds up to twice its
- * own budget again. 450 + 80 + 106 = 636 cl100k in the worst case, which is
- * 757 WordPiece — and even a plain `maxTokens` chunk is 450 x 1.19 = 536 before
- * the header is prepended.
- *
- * The numbers are left as configured because they are a deliberate choice about
- * passage size, not an accident. What is NOT left alone is the silence: the
- * local provider now measures every batch with the model's own tokenizer and
- * logs a truncation warning naming the offending lengths. The first test below
- * is what keeps that promise honest; the second records the nearest budget that
- * satisfies the 512 bound outright, so adopting it is a one-line edit against a
- * verified number rather than another guess.
+ * The first test is the guard on the budget. The second is the guard on the
+ * guard: truncation must be LOUD whatever the budget is set to, so that a
+ * future retune that crosses the line shows up in logs rather than only as
+ * quietly worse retrieval.
  * ───────────────────────────────────────────────────────────────────────────
  */
 
@@ -48,16 +44,6 @@ const skip = process.env.SKIP_MODEL_TESTS === "1";
 const SEQUENCE_LIMIT = 512;
 
 const MODEL = process.env.EMBEDDING_MODEL ?? "Xenova/bge-small-en-v1.5";
-
-/**
- * The budget that measurement shows does fit, including the header and the
- * worst-case overlap-plus-merge tail. Kept here as a tested fact.
- */
-const VERIFIED_SAFE_BUDGET = {
-  targetTokens: 300,
-  maxTokens: 380,
-  minTokens: 70,
-} as const;
 
 /**
  * A worst case, not an average one: long title, deep nested headings, and
@@ -89,91 +75,87 @@ function buildWorstCaseDocument(): { title: string; text: string } {
   return { title, text: parts.join("\n\n") };
 }
 
-function augmentedChunks(options?: {
-  targetTokens: number;
-  maxTokens: number;
-  minTokens: number;
-}): string[] {
+function augmentedChunks(): string[] {
   const { title, text } = buildWorstCaseDocument();
   const chunks = chunkDocument({
     text,
     pages: [{ pageNumber: 1, charStart: 0, charEnd: text.length }],
-    options,
   });
   expect(chunks.length).toBeGreaterThan(3);
   return chunks.map((chunk) => embeddingText(chunk, title));
 }
 
-describe.skipIf(skip)("chunk budget against the model's sequence limit", () => {
-  it("never truncates silently — the provider names what it had to cut", async () => {
-    // THE INVARIANT THAT ACTUALLY HOLDS. Whatever the budget is set to, a
-    // passage that exceeds the model's limit must produce a visible warning
-    // rather than a quietly shortened vector. Silent truncation is the failure
-    // mode with no symptom: the stored text still shows the tail, the vector
-    // no longer contains it, and retrieval degrades with nothing to point at.
-    const tokenizer = await AutoTokenizer.from_pretrained(MODEL);
-    const texts = augmentedChunks();
+async function wordPieceLengths(texts: string[]): Promise<number[]> {
+  const tokenizer = await AutoTokenizer.from_pretrained(MODEL);
+  return texts.map(
+    (text) =>
+      tokenizer(text, { truncation: false, padding: false }).input_ids.dims.at(
+        -1,
+      ) as number,
+  );
+}
 
-    const lengths = texts.map(
-      (text) =>
-        tokenizer(text, { truncation: false, padding: false }).input_ids.dims.at(
-          -1,
-        ) as number,
-    );
+describe.skipIf(skip)("chunk budget against the model's sequence limit", () => {
+  it("keeps every augmented chunk inside the 512-token limit", async () => {
+    const texts = augmentedChunks();
+    const lengths = await wordPieceLengths(texts);
     const longest = Math.max(...lengths);
-    const overLimit = lengths.filter((n) => n > SEQUENCE_LIMIT).length;
 
     console.info(
       `[budget] ${texts.length} chunks | longest ${longest}/${SEQUENCE_LIMIT} ` +
-        `WordPiece | ${overLimit} over | cl100k target ${CHUNKING.targetTokens} ` +
-        `max ${CHUNKING.maxTokens} min ${CHUNKING.minTokens}`,
+        `WordPiece | cl100k target ${CHUNKING.targetTokens} max ` +
+        `${CHUNKING.maxTokens} min ${CHUNKING.minTokens}`,
     );
 
+    // THE ASSERTION. Nothing is truncated, so no vector is missing its tail.
+    expect(longest).toBeLessThanOrEqual(SEQUENCE_LIMIT);
+
+    // With real headroom, so a denser document — a table of figures, a
+    // non-English passage — does not quietly cross the line.
+    expect(longest).toBeLessThanOrEqual(SEQUENCE_LIMIT * 0.95);
+  }, 300_000);
+
+  it("embeds the whole corpus without a truncation warning", async () => {
+    // The budget above is checked with a standalone tokenizer; this checks the
+    // same thing through the provider that will actually do it in production,
+    // and asserts the absence of the alarm rather than the presence of a
+    // number. Belt and braces on the one failure that has no symptom.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
-      await createLocalEmbeddingProvider().embedDocuments(texts);
+      await createLocalEmbeddingProvider().embedDocuments(augmentedChunks());
 
-      const warnings = warn.mock.calls
+      const truncations = warn.mock.calls
         .map((call) => String(call[0]))
         .filter((message) => message.includes("TRUNCATION"));
 
-      if (overLimit > 0) {
-        // Over the limit: the alarm must have fired, and must say how far over.
-        expect(warnings.length).toBeGreaterThan(0);
-        expect(warnings.join(" ")).toContain(String(longest));
-      } else {
-        // Within the limit: no false alarms.
-        expect(warnings).toEqual([]);
-      }
+      expect(truncations).toEqual([]);
     } finally {
       warn.mockRestore();
     }
   }, 300_000);
 
-  it("fits inside the limit at the verified-safe budget", async () => {
-    // The nearest budget that satisfies the 512 bound outright, measured rather
-    // than estimated. If CHUNKING is ever retuned to these numbers this test
-    // becomes the regression guard for it; until then it is the evidence that
-    // they work.
-    const tokenizer = await AutoTokenizer.from_pretrained(MODEL);
-    const texts = augmentedChunks(VERIFIED_SAFE_BUDGET);
+  it("still shouts if something does exceed the limit", async () => {
+    // The guard on the guard. If this stops firing, the test above becomes
+    // meaningless — it would pass on a broken alarm just as happily as on a
+    // correct budget. Fed something unambiguously over the line on purpose.
+    const oversized = Array.from(
+      { length: 400 },
+      (_, i) =>
+        `Clause ${i + 1} of the agreement concerns the delivery of services.`,
+    ).join(" ");
 
-    const lengths = texts.map(
-      (text) =>
-        tokenizer(text, { truncation: false, padding: false }).input_ids.dims.at(
-          -1,
-        ) as number,
-    );
-    const longest = Math.max(...lengths);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await createLocalEmbeddingProvider().embedDocuments([oversized]);
 
-    console.info(
-      `[budget] verified-safe (${VERIFIED_SAFE_BUDGET.targetTokens}/` +
-        `${VERIFIED_SAFE_BUDGET.maxTokens}/${VERIFIED_SAFE_BUDGET.minTokens}): ` +
-        `${texts.length} chunks | longest ${longest}/${SEQUENCE_LIMIT} WordPiece`,
-    );
+      const truncations = warn.mock.calls
+        .map((call) => String(call[0]))
+        .filter((message) => message.includes("TRUNCATION"));
 
-    expect(longest).toBeLessThanOrEqual(SEQUENCE_LIMIT);
-    // With real headroom, so a denser document does not quietly cross the line.
-    expect(longest).toBeLessThanOrEqual(SEQUENCE_LIMIT * 0.95);
+      expect(truncations.length).toBe(1);
+      expect(truncations[0]).toContain("512-token limit");
+    } finally {
+      warn.mockRestore();
+    }
   }, 300_000);
 });

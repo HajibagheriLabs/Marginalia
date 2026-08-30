@@ -1,5 +1,12 @@
 import { relations } from "drizzle-orm";
-import { index, integer, pgTable, timestamp, uuid } from "drizzle-orm/pg-core";
+import {
+  index,
+  integer,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from "drizzle-orm/pg-core";
 
 import { usageKind } from "./enums";
 import { users } from "./auth";
@@ -25,6 +32,29 @@ export const usageEvents = pgTable(
     kind: usageKind("kind").notNull(),
     quantity: integer("quantity").notNull(),
     costCents: integer("cost_cents").notNull().default(0),
+
+    /**
+     * WHO did the work: "local" for in-process inference, or a model slug for
+     * anything billed by a vendor.
+     *
+     * Exists so the settings page can be honest rather than vague. Embeddings
+     * run on this server's CPU, so their monetary cost is genuinely zero — not
+     * "too small to show", not estimated at some notional per-token rate.
+     * Writing 0 into `cost_cents` without recording WHY it is zero would leave
+     * a readout that looks like missing data. With this column it can say
+     * "1.2M tokens embedded locally, no API cost", which is the true statement.
+     */
+    source: text("source"),
+
+    /**
+     * Wall-clock milliseconds the work took.
+     *
+     * For local inference this is the meaningful cost — the function-seconds
+     * actually spent — and it is what would turn into money first if this ever
+     * outgrew a free tier. Recording it now means the usage page has real data
+     * to show instead of a column of zeroes.
+     */
+    durationMs: integer("duration_ms"),
 
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

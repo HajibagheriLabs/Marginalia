@@ -78,7 +78,7 @@ export const CHUNKING = {
    * argument intact, but a single vector averaged over hundreds of tokens is a
    * blur: it matches everything a little and nothing well.
    *
-   * WHY 350 AND NOT SOMETHING ROUNDER. This number is not chosen from taste; it
+   * WHY 300 AND NOT SOMETHING ROUNDER. This number is not chosen from taste; it
    * is derived from the embedding model's hard limit, working backwards.
    *
    * These are cl100k (tiktoken) tokens, but the text is encoded by
@@ -91,28 +91,28 @@ export const CHUNKING = {
    * diagnose from the outside, which is why the budget is set to make it
    * unreachable rather than to be caught later.
    *
-   * MEASURED, NOT ESTIMATED — and the measurement is worth reading before
-   * touching these numbers. `budget.integration.test.ts` runs a worst-case
-   * document through the real BGE tokenizer and reports:
+   * MEASURED, NOT ESTIMATED. `budget.integration.test.ts` runs a worst-case
+   * document — long title, three-level breadcrumb, dense clause prose —
+   * through the real BGE tokenizer and reports:
    *
    *     WordPiece-per-cl100k ratio, English legal prose ....... 1.19
    *     context header for a deep three-level breadcrumb ...... 58 tokens
-   *     worst augmented chunk at 350/450/80 .................. 563 / 512
+   *     worst augmented chunk at 300/380/70 .................. 462 / 512
    *
-   * So the current budget DOES overshoot the limit at the top of its range.
-   * The reason is that a stored chunk is not `targetTokens` long: the packer
-   * fills to `maxTokens`, the merge pass can add `minTokens` on top, and the
-   * overlap adds up to twice its own budget again — 450 + 80 + 106 = 636
-   * cl100k worst case, and even a plain `maxTokens` chunk is 536 WordPiece
-   * before the header goes on.
+   * These are the numbers that budget is set to, and that test asserts the
+   * bound holds. It is not a guess with a safety factor bolted on.
    *
-   * Two things follow, and both are already in place. Truncation is no longer
-   * SILENT: the local provider tokenizes each batch with the model's own
-   * tokenizer and logs a warning naming the lengths it had to cut, so this
-   * shows up in logs instead of only in worse retrieval. And the nearest
-   * budget that satisfies 512 outright has been measured — 300 / 380 / 70,
-   * worst case 462 — and is asserted by that same test, so adopting it is a
-   * one-line edit against a verified number.
+   * WHY THE CEILING IS THE NUMBER THAT MATTERS. A stored chunk is not
+   * `targetTokens` long: the packer fills to `maxTokens`, the merge pass can
+   * add `minTokens` on top, and the overlap adds up to twice its own budget
+   * again. The tail, not the target, is what meets the model's limit — which
+   * is why an earlier 350/450/80 budget measured 563 and overshot, despite a
+   * target that looked comfortably small.
+   *
+   * Truncation is also no longer SILENT, whatever these are set to: the local
+   * provider tokenizes each batch with the model's own tokenizer and logs a
+   * warning naming the lengths it had to cut. Raising the budget shows up in
+   * the logs rather than only in worse retrieval.
    *
    * The exact-answer alternative remains available and is strictly better if
    * you want to reclaim the headroom: pass the model's own tokenizer through
@@ -120,7 +120,7 @@ export const CHUNKING = {
    * directly, which removes the ratio from the reasoning entirely. The seam is
    * already here; see `TokenCounter`.
    */
-  targetTokens: 350,
+  targetTokens: 300,
 
   /**
    * Hard ceiling. A chunk may run past `targetTokens` to finish absorbing a
@@ -135,7 +135,7 @@ export const CHUNKING = {
    * The one documented exception is the merge pass below, which may push a
    * chunk to `maxTokens + minTokens` rather than emit a fragment.
    */
-  maxTokens: 450,
+  maxTokens: 380,
 
   /**
    * No chunk below this survives; it is merged into its neighbour.
@@ -144,11 +144,11 @@ export const CHUNKING = {
    * packing rather than during it, because whether a chunk is too small is only
    * knowable once it is closed.
    *
-   * Scaled with the target: at a 350-token budget a 100-token floor would make
+   * Scaled with the target: at a 300-token budget a 100-token floor would make
    * nearly a third of a chunk the minimum viable passage, which is too coarse
    * to absorb a short clause without distorting it.
    */
-  minTokens: 80,
+  minTokens: 70,
 
   /**
    * How full a chunk must be before a heading is allowed to close it, as a
@@ -156,7 +156,7 @@ export const CHUNKING = {
    * `minTokens`, so 0 means "break at every heading that leaves a legal chunk".
    *
    * This is the knob for the one place the project's two chunking rules pull
-   * against each other: "split on structure first" and "target ~350 tokens". A
+   * against each other: "split on structure first" and "target ~300 tokens". A
    * contract is not a handful of long sections — it is two hundred short
    * numbered clauses, and honouring every heading turns such a document into
    * two hundred 150-token passages that never approach the budget.
@@ -178,7 +178,7 @@ export const CHUNKING = {
   sectionBreakRatio: 0,
 
   /**
-   * Overlap, as a fraction of `targetTokens` (0.15 -> ~53 tokens).
+   * Overlap, as a fraction of `targetTokens` (0.15 -> ~45 tokens).
    *
    * Overlap exists for one reason: a sentence at a chunk boundary answers a
    * question using a subject named in the previous sentence, and without

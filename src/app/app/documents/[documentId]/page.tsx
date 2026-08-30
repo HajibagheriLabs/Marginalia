@@ -4,6 +4,7 @@ import { ConversationPane } from "@/components/workspace/conversation-pane";
 import { ReadingPane } from "@/components/workspace/reading-pane";
 import { Workbench } from "@/components/workspace/workbench";
 import { requireDocumentAccess } from "@/lib/auth-server";
+import { readDocumentProgress } from "@/lib/ingest/progress";
 import { readWorkspacePrefs } from "@/lib/workspace-prefs.server";
 
 /**
@@ -26,15 +27,26 @@ export default async function DocumentPage({
   params,
 }: PageProps<"/app/documents/[documentId]">) {
   const { documentId } = await params;
-  const { document } = await requireDocumentAccess(documentId);
+  const { user, document } = await requireDocumentAccess(documentId);
 
   const { conversationWidth } = await readWorkspacePrefs();
   const ready = document.status === "ready";
 
+  // Server-rendered so the progress readout has a real number on first paint
+  // rather than flashing "0 of 612" until the first poll lands.
+  const progress = ready
+    ? null
+    : await readDocumentProgress(document.id, user.id);
+
   return (
     <Workbench
       initialConversationWidth={conversationWidth}
-      reading={<ReadingPane document={document} />}
+      reading={
+        <ReadingPane
+          document={document}
+          indexedCount={progress?.indexedCount ?? 0}
+        />
+      }
       conversation={
         <ConversationPane
           documentsInScope={ready ? 1 : 0}

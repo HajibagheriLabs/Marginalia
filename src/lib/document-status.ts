@@ -59,3 +59,16 @@ export const INGEST_STAGES: DocumentStatus[] = [
 export function isSearchable(status: DocumentStatus): boolean {
   return status === "ready";
 }
+
+/**
+ * Still moving through the pipeline, so the UI should keep watching it.
+ *
+ * Reads the `terminal` flag above rather than listing states again, so adding a
+ * state to the machine cannot leave this behind. Lives here, in the module with
+ * no server imports, because the components that poll are Client Components —
+ * reaching into `lib/documents.ts` for it would pull the Postgres driver into
+ * the browser bundle.
+ */
+export function isInFlight(status: DocumentStatus): boolean {
+  return !DOCUMENT_STATUS_META[status].terminal;
+}

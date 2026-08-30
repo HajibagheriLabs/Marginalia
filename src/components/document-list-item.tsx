@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/tooltip";
 import type { DocumentStatus } from "@/db/schema";
 import { DOCUMENT_STATUS_META } from "@/lib/document-status";
+import { describeProgress } from "@/lib/ingest/progress-format";
 import { cn } from "@/lib/utils";
 
 export interface DocumentListItemProps {
@@ -18,6 +19,10 @@ export interface DocumentListItemProps {
   /** Null until extraction has counted the pages. */
   pageCount: number | null;
   status: DocumentStatus;
+  /** Null until chunking has run. */
+  chunkCount?: number | null;
+  /** Passages already embedded, for the in-flight readout. */
+  indexedCount?: number;
   /** The document currently open in the reading pane. */
   active?: boolean;
   /** The 56px icon rail: initial + dot only, with the title in a tooltip. */
@@ -36,13 +41,17 @@ export interface DocumentListItemProps {
  *
  * The status word appears in full for every state except `ready`, because
  * "ready" is the state a document is supposed to be in and saying so on every
- * row would be filler. A document that is mid-flight or broken says what it is.
+ * row would be filler. A document that is mid-flight or broken says what it is —
+ * and while it is embedding it says how far along it is, because "Embedding 240
+ * of 612 passages" is worth the same pixels that "Embedding" would have used.
  */
 export function DocumentListItem({
   href,
   title,
   pageCount,
   status,
+  chunkCount = null,
+  indexedCount = 0,
   active = false,
   collapsed = false,
   className,
@@ -52,6 +61,15 @@ export function DocumentListItem({
     pageCount === null
       ? null
       : `${pageCount} ${pageCount === 1 ? "page" : "pages"}`;
+
+  // The same sentence the reading pane shows, so the two never disagree about
+  // what the document is doing.
+  const stageLabel = describeProgress({
+    status,
+    pageCount,
+    chunkCount,
+    indexedCount,
+  });
 
   if (collapsed) {
     return (
@@ -83,9 +101,9 @@ export function DocumentListItem({
         <TooltipContent side="right">
           <span className="block text-body-sm text-text">{title}</span>
           <span className="num mt-0.5 block text-mono-xs text-text-faint">
-            {[pages, status === "ready" ? null : meta.label]
+            {[pages, status === "ready" ? null : stageLabel]
               .filter(Boolean)
-              .join(" · ") || meta.label}
+              .join(" · ") || stageLabel}
           </span>
         </TooltipContent>
       </Tooltip>
@@ -125,7 +143,7 @@ export function DocumentListItem({
         <span className="flex items-center gap-1.5 pl-3.5 text-[11px] leading-[1.45] text-text-faint">
           {pages ? <span className="num">{pages}</span> : null}
           {pages && status !== "ready" ? <span aria-hidden>·</span> : null}
-          {status === "ready" ? null : <span>{meta.label}</span>}
+          {status === "ready" ? null : <span>{stageLabel}</span>}
         </span>
       ) : null}
     </Link>

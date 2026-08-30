@@ -6,6 +6,7 @@ import { documentPages, documents } from "@/db/schema";
 import { env } from "@/lib/env";
 
 import { ExtractionError, extractDocument } from "./extract";
+import { StageError, type StageResult, type StageDeps } from "./stage";
 
 /**
  * The extraction STAGE: everything around `extract.ts` that touches the world.
@@ -23,11 +24,12 @@ import { ExtractionError, extractDocument } from "./extract";
  * deliver the same job twice without corrupting anything.
  *
  *   uploaded → EXTRACTING → chunking → embedding → indexing → ready | failed
+ *
+ * It does NOT write `documents.status` and does not decide what runs next —
+ * see the stage contract in `stage.ts`. It does the work, or it throws a
+ * `StageError` carrying a message fit to show the person who uploaded the file.
+ * The orchestrator owns the state machine.
  */
-
-export type ExtractionStageResult =
-  | { ok: true; pageCount: number; charCount: number; ocrUsed: boolean }
-  | { ok: false; error: string };
 
 /**
  * Read every byte of a blob into memory.
@@ -81,7 +83,9 @@ async function readBlob(url: string): Promise<Uint8Array> {
 export async function runExtraction(
   documentId: string,
   userId: string,
-): Promise<ExtractionStageResult> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _deps?: StageDeps,
+): Promise<StageResult> {
   const [document] = await db
     .select()
     .from(documents)
@@ -95,86 +99,58 @@ export async function runExtraction(
     .limit(1);
 
   if (!document) {
-    return { ok: false, error: "That document no longer exists." };
+    throw new StageError("That document no longer exists.");
   }
 
-  // Claim the stage before doing any work, so the rail shows "Extracting text"
-  // for the whole time it runs rather than only if it succeeds.
-  await db
-    .update(documents)
-    .set({ status: "extracting", failedStage: null, errorMessage: null })
-    .where(eq(documents.id, document.id));
-
+  let result;
   try {
     const data = await readBlob(document.blobUrl);
-    const result = await extractDocument({
+    result = await extractDocument({
       data,
       filename: document.filename,
       mimeType: document.mimeType,
       // No OCR provider is wired up. A scanned PDF is refused with a message
       // that says so — see the OCR SEAM comment in extract.ts.
     });
-
-    await db.transaction(async (tx) => {
-      // Idempotency: a re-run replaces the previous extraction wholesale.
-      // Anything keyed to the old pages is downstream of this stage and is
-      // rebuilt by the stages that follow.
-      await tx
-        .delete(documentPages)
-        .where(eq(documentPages.documentId, document.id));
-
-      await tx.insert(documentPages).values(
-        result.pages.map((page) => ({
-          documentId: document.id,
-          pageNumber: page.pageNumber,
-          text: page.text,
-          charStart: page.charStart,
-          charEnd: page.charEnd,
-        })),
-      );
-
-      await tx
-        .update(documents)
-        .set({
-          pageCount: result.pageCount,
-          // Extraction is done; the document now waits to be chunked. The
-          // status names the stage a document is AT, and nothing runs chunking
-          // yet, so it parks here — which the state machine treats as a normal
-          // condition rather than a failure.
-          status: "chunking",
-          failedStage: null,
-          errorMessage: null,
-        })
-        .where(eq(documents.id, document.id));
-    });
-
-    return {
-      ok: true,
-      pageCount: result.pageCount,
-      charCount: result.text.length,
-      ocrUsed: result.ocrUsed,
-    };
   } catch (error) {
     // An ExtractionError carries a message written for the person who uploaded
-    // the file. Anything else is a bug, and its text must not be shown.
-    const message =
-      error instanceof ExtractionError
-        ? error.message
-        : "This document could not be processed. Try uploading it again.";
-
-    if (!(error instanceof ExtractionError)) {
-      console.error("[extract] unexpected failure", documentId, error);
+    // the file. Anything else is a bug, and its text must not be shown — the
+    // orchestrator substitutes a generic one for anything that is not a
+    // StageError.
+    if (error instanceof ExtractionError) {
+      throw new StageError(error.message, { cause: error });
     }
-
-    await db
-      .update(documents)
-      .set({
-        status: "failed",
-        failedStage: "extracting",
-        errorMessage: message,
-      })
-      .where(eq(documents.id, document.id));
-
-    return { ok: false, error: message };
+    throw error;
   }
+
+  await db.transaction(async (tx) => {
+    // IDEMPOTENCE: a re-run replaces the previous extraction wholesale rather
+    // than appending to it. Everything keyed to the old pages is downstream of
+    // this stage and is rebuilt by the stages that follow.
+    await tx
+      .delete(documentPages)
+      .where(eq(documentPages.documentId, document.id));
+
+    await tx.insert(documentPages).values(
+      result.pages.map((page) => ({
+        documentId: document.id,
+        pageNumber: page.pageNumber,
+        text: page.text,
+        charStart: page.charStart,
+        charEnd: page.charEnd,
+      })),
+    );
+
+    await tx
+      .update(documents)
+      .set({ pageCount: result.pageCount })
+      .where(eq(documents.id, document.id));
+  });
+
+  return {
+    complete: true,
+    detail: `${result.pageCount} pages, ${result.text.length} chars${
+      result.ocrUsed ? ", OCR" : ""
+    }`,
+  };
 }

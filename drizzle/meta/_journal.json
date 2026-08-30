@@ -8,6 +8,13 @@
       "when": 1787256664330,
       "tag": "0000_sweet_firedrake",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788086425137,
+      "tag": "0001_flashy_nebula",
+      "breakpoints": true
     }
   ]
 }

@@ -6,11 +6,17 @@ import { del, head } from "@vercel/blob";
 import { z } from "zod";
 
 import { db } from "@/db";
-import { documents } from "@/db/schema";
+import { chunks, documentPages, documents } from "@/db/schema";
 import { requireDocumentAccess, requireUser } from "@/lib/auth-server";
 import { countUserDocuments } from "@/lib/documents";
 import { env } from "@/lib/env";
+import { resumeFailedDocument } from "@/lib/ingest/pipeline";
+import {
+  readDocumentProgress,
+  type DocumentProgress,
+} from "@/lib/ingest/progress";
 import { startIngestion } from "@/lib/ingest/start";
+import { getVectorStore } from "@/lib/vector";
 import {
   ACCEPTED_CONTENT_TYPES,
   MAX_DOCUMENTS_PER_USER,
@@ -155,71 +161,135 @@ export async function registerUploadedDocument(
 }
 
 /**
- * Remove a document.
+ * Remove a document, and everything derived from it.
  *
- * The ROW is soft-deleted — `documents` is the only soft-deleted table in the
- * schema, and every query filters `deleted_at IS NULL`, so the document leaves
- * the rail, the quota, and retrieval in one write. The BLOB is hard-deleted,
- * because storage is the thing actually being freed and there is nothing to
- * recover it for once the row is gone.
+ * ORDER MATTERS, and it is: blob, then vectors, then rows.
  *
- * Ownership is proved by `requireDocumentAccess`, which 404s identically
- * whether the document is missing or belongs to someone else.
+ * It runs outward-in, from the copy that costs the most to keep toward the one
+ * that everything else is found through. The document row is the index into all
+ * of it — the blob URL and the chunk ids are only reachable from there — so if
+ * the row went first, a failure at any later step would strand data with
+ * nothing left pointing at it. Deleting the row last means every earlier
+ * failure is recoverable: the row is still there, still listable, still
+ * retryable.
+ *
+ * NOTHING ABORTS THE SEQUENCE. A blob that will not delete must not keep a
+ * document in the user's library forever — that is a storage leak turning into
+ * a UI bug. So each step is attempted, failures are collected, and the caller
+ * gets back a list of what could not be cleaned up. The user's intent is
+ * carried out; the mess is reported rather than hidden.
+ *
+ * The document row is SOFT-deleted, as the schema requires — it is the only
+ * soft-deleted table, and every query filters `deleted_at IS NULL`, so the
+ * document leaves the rail, the quota, and retrieval in one write. Pages and
+ * chunks are HARD-deleted: they are derived data, they are the bulk of the
+ * storage, and they can be rebuilt from the blob if the blob still exists.
  */
 export async function deleteDocument(
   documentId: string,
-): Promise<ActionResult> {
+): Promise<ActionResult<{ warnings: string[] }>> {
   const { user, document } = await requireDocumentAccess(documentId);
+  const warnings: string[] = [];
 
-  await db
-    .update(documents)
-    .set({ deletedAt: new Date() })
-    .where(
-      and(
-        eq(documents.id, document.id),
-        eq(documents.userId, user.id),
-        isNull(documents.deletedAt),
-      ),
-    );
-
+  // 1. THE BLOB. The only copy of the original file, and the only one costing
+  //    storage that the user is not otherwise paying for.
   try {
     await del(document.blobUrl, { token: env.BLOB_READ_WRITE_TOKEN });
   } catch (error) {
-    // The row is already gone from the user's view; a stranded blob is a
-    // storage leak to clean up, not a failure to report back.
-    console.error("[documents] failed to delete blob", error);
+    console.error("[documents] failed to delete blob", document.id, error);
+    warnings.push("the stored file");
+  }
+
+  // 2. THE VECTORS, by document_id filter. Left behind, these would be points
+  //    in a shared collection belonging to a document that no longer exists —
+  //    unreachable through search, since every search also filters on
+  //    documents the user still owns, but occupying the free tier's quota
+  //    indefinitely.
+  try {
+    await getVectorStore().deleteByDocument(document.id);
+  } catch (error) {
+    console.error("[documents] failed to delete vectors", document.id, error);
+    warnings.push("the search index entries");
+  }
+
+  // 3. THE ROWS. Pages and chunks go for real; the document is soft-deleted.
+  try {
+    await db.transaction(async (tx) => {
+      await tx.delete(chunks).where(eq(chunks.documentId, document.id));
+      await tx
+        .delete(documentPages)
+        .where(eq(documentPages.documentId, document.id));
+      await tx
+        .update(documents)
+        .set({ deletedAt: new Date() })
+        .where(
+          and(
+            eq(documents.id, document.id),
+            eq(documents.userId, user.id),
+            isNull(documents.deletedAt),
+          ),
+        );
+    });
+  } catch (error) {
+    // The one step whose failure leaves the document visible. Report it as a
+    // failure rather than a warning, because nothing was removed from the
+    // user's point of view.
+    console.error("[documents] failed to delete rows", document.id, error);
+    return {
+      ok: false,
+      error: "That document could not be removed. Try again in a moment.",
+    };
   }
 
   revalidatePath("/app", "layout");
-  return { ok: true };
+  return { ok: true, warnings };
 }
 
 /**
- * Re-run ingestion for a document that failed.
+ * Re-run ingestion for a document that failed, FROM WHERE IT FAILED.
  *
- * Every stage is idempotent and independently re-runnable, which is what makes
- * this a one-line action rather than a repair routine: extraction deletes the
- * document's pages and writes them again inside a transaction, so re-running it
- * on a half-extracted document is indistinguishable from running it on a fresh
- * one. `documents.failed_stage` records where it died, so a resumable pipeline
- * later can restart from that stage instead of the beginning.
+ * `documents.failed_stage` records the stage that threw, and
+ * `resumeFailedDocument` simply sets the status back to it. That is the whole
+ * repair: the status column IS the pipeline's cursor, so moving it is the same
+ * as seeking.
+ *
+ * Resuming rather than restarting is not an optimisation. A 200-page contract
+ * that failed while embedding passage 400 has already been downloaded, parsed,
+ * and split; redoing that is minutes of function time and a second full read of
+ * the blob, for a result identical to what is already in the database. What
+ * makes it safe is that every stage is idempotent — the work already done is
+ * either kept or replaced wholesale, never appended to.
  */
 export async function retryIngestion(
   documentId: string,
-): Promise<ActionResult> {
+): Promise<ActionResult<{ resumedAt: string }>> {
   const { user, document } = await requireDocumentAccess(documentId);
 
-  await db
-    .update(documents)
-    .set({
-      status: "uploaded",
-      failedStage: null,
-      errorMessage: null,
-    })
-    .where(and(eq(documents.id, document.id), eq(documents.userId, user.id)));
-
+  const resumedAt = await resumeFailedDocument(document.id, user.id);
   await startIngestion(document.id, user.id);
 
   revalidatePath("/app", "layout");
-  return { ok: true };
+  return { ok: true, resumedAt };
+}
+
+/**
+ * Poll one document's ingestion progress.
+ *
+ * A Server Action rather than a route handler so the session check is the same
+ * one every other action uses, and so the client calls it as a function instead
+ * of hand-rolling a fetch. `requireDocumentAccess` 404s identically whether the
+ * document is missing or belongs to someone else, so polling cannot be used to
+ * discover another user's document ids.
+ */
+export async function getDocumentProgress(
+  documentId: string,
+): Promise<ActionResult<{ progress: DocumentProgress }>> {
+  const { user, document } = await requireDocumentAccess(documentId);
+
+  const progress = await readDocumentProgress(document.id, user.id);
+  if (!progress) {
+    return { ok: false, error: "That document no longer exists." };
+  }
+
+  return { ok: true, progress };
 }

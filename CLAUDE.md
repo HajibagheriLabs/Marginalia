@@ -58,19 +58,19 @@ query:   question → (optional rewrite for multi-turn) → dense top-50 (Qdrant
          → context assembly with numbered markers → grounded generation → citation validation
 
 ### Chunking rules
-- Target ~350 tokens, ceiling ~450, ~15% overlap. Split on structure first (headings → paragraphs →
-  sentences). Never split mid-sentence when it can be avoided. Never leave a chunk under ~80 tokens —
+- Target ~300 tokens, ceiling ~380, ~15% overlap. Split on structure first (headings → paragraphs →
+  sentences). Never split mid-sentence when it can be avoided. Never leave a chunk under ~70 tokens —
   merge it.
 - The budget exists to fit bge-small-en-v1.5, which is BERT WordPiece with a hard 512-token sequence
   limit that Transformers.js truncates past SILENTLY. Chunk budgets are counted in cl100k tokens, and
   the two are related by a MEASURED ratio, not an identity — see evals in
   src/lib/embeddings/budget.integration.test.ts, which reports 1.19 for English legal prose and a
   58-token context header for a deep breadcrumb.
-- KNOWN: at 350/450/80 the worst augmented chunk measures 563 WordPiece, over the 512 limit, because a
-  stored chunk can reach maxTokens + a merge + overlap (450+80+106) rather than targetTokens. The
-  measured budget that fits is 300/380/70 (worst case 462). Truncation is no longer silent either way —
-  the local provider tokenizes each batch with the model's own tokenizer and logs a TRUNCATION warning
-  naming the lengths it cut. Retune with that test, never by estimate.
+- 300/380/70 is the MEASURED-SAFE budget: worst augmented chunk 462 of 512, asserted by that test. The
+  CEILING is what meets the limit, not the target — a stored chunk reaches maxTokens plus a possible
+  merge plus overlap, which is how an earlier 350/450/80 budget measured 563 and overshot. Truncation is
+  never silent either way: the local provider tokenizes each batch with the model's own tokenizer and
+  logs a TRUNCATION warning naming the lengths it cut. Retune with that test, never by estimate.
 - Every chunk stores: document_id, ordinal, text, token_count, page_from, page_to, char_start,
   char_end (offsets into the document's concatenated page text), section_path (heading breadcrumb).
 - CONTEXT HEADER: before embedding, prepend "<document title> — <section path>" to the chunk text.
@@ -100,11 +100,22 @@ query:   question → (optional rewrite for multi-turn) → dense top-50 (Qdrant
 
 ## Ingestion job model
 - documents.status: uploaded → extracting → chunking → embedding → indexing → ready | failed
+- status names the stage that is PENDING OR RUNNING, not the one that finished. It is the pipeline's
+  cursor: resuming is "run the stage the status names", so there is no separate progress pointer.
 - Each stage is idempotent and independently re-runnable. On failure, store failed_stage and a
   human-readable error, and surface both in the UI with a "Retry" action that resumes from that stage.
-- Vercel Hobby with Fluid Compute allows roughly 300 s per function; keep each stage well inside that
-  and re-enqueue rather than looping. The state machine exists so a queue can be added later without
-  redesigning anything.
+- Stages NEVER write documents.status and never schedule anything — src/lib/ingest/pipeline.ts owns
+  the state machine. That is what makes the orchestrator swappable for a queue: a consumer would call
+  the same four runners in the same order, and the stages would not change.
+- Idempotence mechanisms, per stage: extract and chunk delete-then-write in a transaction; chunk ALSO
+  deletes the document's vector points, because re-chunking mints new chunk ids and would otherwise
+  strand the old points; embed skips chunks with indexed_at set and upserts keyed by chunk id; index
+  writes nothing but the ready flags.
+- chunks.indexed_at is resumability, idempotence, and the progress readout in one column. Never add a
+  separate progress counter — it can disagree with the work; a count of indexed_at cannot.
+- Vercel Hobby with Fluid Compute allows roughly 300 s per function; the pipeline budgets 200 s and
+  re-invokes itself via /api/ingest (INGEST_SECRET) for the remainder. Enable it at
+  Project → Settings → Functions → Fluid Compute.
 - Uploads go CLIENT-SIDE directly to Vercel Blob with a short-lived token. Vercel functions have a
   4.5 MB request body limit — never route file bytes through an API route.
 

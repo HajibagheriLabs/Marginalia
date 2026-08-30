@@ -85,6 +85,18 @@ const serverSchema = z
     EMBEDDING_MODEL: z.string().min(1).default("Xenova/bge-small-en-v1.5"),
     EMBEDDING_DIMENSIONS: z.coerce.number().int().positive().default(384),
 
+    // Shared secret the ingestion route requires.
+    //
+    // The pipeline re-invokes itself over HTTP when a document needs more time
+    // than one function invocation allows, so that route is reachable from the
+    // internet and carries no user session. Without a secret it would be an
+    // unauthenticated endpoint that runs CPU-heavy work on demand for anyone
+    // who learns a document id — a way to burn the whole compute budget from
+    // outside. Generate with `openssl rand -base64 32`.
+    INGEST_SECRET: z
+      .string()
+      .min(16, "must be at least 16 characters; generate with `openssl rand -base64 32`"),
+
     // Where Transformers.js caches the downloaded model weights.
     //
     // Its default lives inside node_modules, which is READ-ONLY on Vercel. The

@@ -88,6 +88,12 @@ npm run dev
 
 The app runs at http://localhost:3000.
 
+Apply database migrations before the first run:
+
+```bash
+npm run db:migrate
+```
+
 | Command             | What it does                                |
 | ------------------- | ------------------------------------------- |
 | `npm run dev`       | Dev server with Turbopack                   |
@@ -97,6 +103,38 @@ The app runs at http://localhost:3000.
 | `npm run typecheck` | `tsc --noEmit`                              |
 | `npm test`          | Vitest                                      |
 | `npm run test:e2e`  | Playwright                                  |
+
+Some tests need real services. They skip themselves when the credentials are
+absent, so `npm test` works on a fresh clone:
+
+| Test                              | Needs                          |
+| --------------------------------- | ------------------------------ |
+| `vector/qdrant.integration`       | `QDRANT_URL`, `QDRANT_API_KEY` |
+| `embeddings/local.integration`    | Network on first run (~34 MB)  |
+| `embeddings/budget.integration`   | Network on first run           |
+| `ingest/pipeline.integration`     | All of the above + `DATABASE_URL` |
+
+Set `SKIP_MODEL_TESTS=1` to skip everything that loads the embedding model.
+
+### Deploying to Vercel
+
+Ingestion runs the embedding model in-process, so it needs long-lived Node
+functions rather than the default short ones.
+
+**Turn on Fluid Compute.** In the Vercel dashboard:
+**Project → Settings → Functions → Fluid Compute → Enable**.
+
+With it on, a Hobby project gets roughly 300 s per invocation instead of 60 s,
+and — the part that matters more — `after()` callbacks keep running once the
+response has been sent, which is how ingestion continues past the request that
+triggered it. Without Fluid Compute the instance can be frozen the moment it
+responds, and a document stops mid-parse with no error recorded.
+
+The pipeline budgets itself to 200 s per invocation and re-invokes itself for
+whatever is left, so a large document simply takes several passes.
+
+Set every variable from `.env.example` in **Settings → Environment Variables**,
+including `INGEST_SECRET`, which authenticates the pipeline's calls to itself.
 
 ## Layout
 
