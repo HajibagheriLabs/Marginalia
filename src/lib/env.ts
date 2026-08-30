@@ -85,6 +85,25 @@ const serverSchema = z
     EMBEDDING_MODEL: z.string().min(1).default("Xenova/bge-small-en-v1.5"),
     EMBEDDING_DIMENSIONS: z.coerce.number().int().positive().default(384),
 
+    // Retrieval switches. Both default OFF so the app works end to end with
+    // neither, and so the eval harness can measure each one against a baseline
+    // rather than against an assumption.
+    //
+    // `local` runs the cross-encoder Xenova/ms-marco-MiniLM-L-6-v2 in this
+    // process, the same way embeddings run. There is deliberately no hosted
+    // option: every reranking API is metered, and this project runs with no
+    // card on file.
+    RETRIEVAL_RERANKER: z.enum(["off", "local"]).default("off"),
+    RETRIEVAL_RERANK_MODEL: z
+      .string()
+      .min(1)
+      .default("Xenova/ms-marco-MiniLM-L-6-v2"),
+
+    // Rewrites a pronoun-laden follow-up ("what about the second one?") into a
+    // standalone query before retrieval. Costs one extra model round trip per
+    // turn, which is why it is measured before it is trusted.
+    RETRIEVAL_QUERY_REWRITE: z.enum(["off", "on"]).default("off"),
+
     // Shared secret the ingestion route requires.
     //
     // The pipeline re-invokes itself over HTTP when a document needs more time

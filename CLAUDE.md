@@ -89,6 +89,27 @@ query:   question → (optional rewrite for multi-turn) → dense top-50 (Qdrant
   search across documents embedded with different models. Changing the model means re-ingesting, not
   editing config.
 
+### Retrieval rules
+- retrieve() lives in src/lib/retrieval/. Guard first (assertSameEmbeddingSpace), then dense + lexical
+  CONCURRENTLY, then RRF (k=60, in rrf.ts), then optional rerank, then assemble. Every parameter is a
+  named constant in RETRIEVAL / ASSEMBLY / RERANK / REWRITE — no magic numbers at call sites.
+- LEXICAL IS TWO PASSES. websearch_to_tsquery ANDs every term, so "What are the requirements for part
+  number ZX-4471-Q?" does NOT match the passage containing ZX-4471-Q — it lacks the word
+  "requirements". Strict first (exact phrases and negation as typed), then the same parsed query with
+  top-level ` & ` rewritten to ` | ` if strict found nothing. Skip the relaxation when the query has a
+  negation: `a | !b` matches everything lacking b. Without pass two, hybrid silently degrades to
+  dense-only.
+- Distinguish "no searchable terms" (numnode = 0) from "no matches". Note "what about it?" is empty but
+  "what about the ones?" is NOT — "ones" stems to 'one'. Only Postgres knows; ask, never guess.
+- RERANKING IS OFF BY DEFAULT and must stay workable off. It reads RAW LOGITS via
+  AutoModelForSequenceClassification. Do NOT use pipeline("text-classification"): ms-marco-MiniLM has a
+  single output logit, softmax over one value is 1.0, and every passage ties at exactly 1.0 with no
+  error. Measured raw: +6.9 relevant, -11.0 irrelevant.
+- Relevance floors differ by signal: RRF uses a RATIO to the top result (an RRF score has no intrinsic
+  meaning — best possible is always 2/(k+1)), rerank uses an ABSOLUTE 0 (a trained boundary). If
+  everything is below the floor the context is EMPTY — "these documents don't answer that" is correct.
+- The trace is a PRODUCT FEATURE. Ranks are 1-based and null when a channel missed; null is not zero.
+
 ### Generation rules
 - The system prompt instructs: answer ONLY from the numbered passages provided; attach a [n] marker to
   every factual claim; if the passages do not contain the answer, say so plainly and suggest what to
