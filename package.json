@@ -19,6 +19,7 @@
   "dependencies": {
     "@ai-sdk/openai": "4.0.43",
     "@ai-sdk/react": "4.0.72",
+    "@huggingface/transformers": "4.2.0",
     "@openrouter/ai-sdk-provider": "3.0.0",
     "@qdrant/js-client-rest": "1.19.0",
     "@vercel/blob": "2.8.0",
@@ -62,6 +63,8 @@
     "esbuild@0.18.20": true,
     "esbuild@0.25.12": true,
     "esbuild@0.28.2": true,
+    "onnxruntime-node@1.24.3": true,
+    "protobufjs@7.6.6": true,
     "unrs-resolver@1.12.2": true
   }
 }

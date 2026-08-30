@@ -171,7 +171,10 @@ describe("chunk sizing", () => {
       interior.reduce((sum, chunk) => sum + chunk.tokenCount, 0) /
       interior.length;
     expect(mean).toBeGreaterThan(CHUNKING.targetTokens * 0.85);
-    expect(mean).toBeLessThan(CHUNKING.maxTokens + 2 * 105);
+    expect(mean).toBeLessThan(
+      CHUNKING.maxTokens +
+        2 * Math.round(CHUNKING.targetTokens * CHUNKING.overlapRatio),
+    );
   });
 
   it("honours a custom token budget", () => {
@@ -584,7 +587,11 @@ describe("section path", () => {
     );
     const chunks = chunkDocument({ text: deep, pages: singlePage(deep) });
 
-    const path = chunks[0].sectionPath!;
+    // The chunk holding the leaf section's body, not simply the first chunk:
+    // the three outer headings are long enough to fill a chunk of their own.
+    const leaf = chunks.find((chunk) => chunk.text.includes("#### Leaf"))!;
+    const path = leaf.sectionPath!;
+
     expect(path.length).toBeLessThanOrEqual(CHUNKING.maxSectionPathChars + 40);
     // The leaf survives; the ancestors are what get dropped.
     expect(path.endsWith("Leaf section")).toBe(true);
@@ -681,19 +688,25 @@ describe("split hierarchy", () => {
   });
 
   it("does not treat a numbered list marker as a sentence end", () => {
+    // The items end in real full stops, so the sentence splitter is genuinely
+    // in play: the only periods it must NOT break on are the list markers.
     const list = Array.from(
       { length: 40 },
       (_, i) =>
         `${i + 1}. The Provider shall perform the services described in the ` +
-        `applicable statement of work with reasonable skill and care`,
+        `applicable statement of work with reasonable skill and care.`,
     ).join("\n");
 
     const chunks = chunkDocument({ text: list, pages: singlePage(list) });
     expectChunkInvariants(list, chunks);
+    expect(chunks.length).toBeGreaterThan(1);
 
-    // A list item never gets cut immediately after its own number.
+    // Every chunk begins with a whole list item, number attached. A break after
+    // the marker would leave "The Provider shall..." with no clause number —
+    // exactly the citation that cannot be traced back to the contract.
     for (const chunk of chunks) {
-      expect(chunk.text).not.toMatch(/^The Provider shall perform/);
+      expect(chunk.text).toMatch(/^\d+\. The Provider shall perform/);
+      expect(chunk.text.endsWith("care.")).toBe(true);
     }
   });
 });

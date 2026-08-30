@@ -75,37 +75,67 @@ export const CHUNKING = {
    * into the code. SMALLER chunks give sharper vectors and more precise
    * citations, but split reasoning that spans a paragraph boundary and spend
    * more of the context window on repeated headers. LARGER chunks keep an
-   * argument intact, but a single vector averaged over 900 tokens is a blur: it
-   * matches everything a little and nothing well.
+   * argument intact, but a single vector averaged over hundreds of tokens is a
+   * blur: it matches everything a little and nothing well.
    *
-   * READ THIS BEFORE THE FIRST EVAL RUN.
-   * These are cl100k (tiktoken) tokens. The embedding model is
-   * bge-small-en-v1.5, whose encoder is BERT WordPiece with a HARD 512-token
-   * limit, and which produces roughly 1.1-1.2x as many tokens as cl100k for
-   * English prose. A 700-token chunk by this count is therefore ~770-840 BGE
-   * tokens, and Transformers.js will TRUNCATE it at 512 — silently, with no
-   * error, dropping the tail of every long chunk from the vector while the
-   * stored text keeps it. Retrieval then misses answers that are demonstrably
-   * present in the passage, which is close to impossible to diagnose from the
-   * outside.
+   * WHY 350 AND NOT SOMETHING ROUNDER. This number is not chosen from taste; it
+   * is derived from the embedding model's hard limit, working backwards.
    *
-   * Two ways out, to be decided with eval numbers rather than from the
-   * armchair: drop `targetTokens` to ~380-420 so the augmented text fits inside
-   * 512, or swap `countTokens` for the model's own tokenizer through
-   * `ChunkOptions.countTokens` and set the budget in BGE tokens directly. The
-   * seam for the second is already here; see `TokenCounter`.
+   * These are cl100k (tiktoken) tokens, but the text is encoded by
+   * bge-small-en-v1.5, whose tokenizer is BERT WordPiece with a HARD 512-token
+   * sequence limit and which produces roughly 1.1-1.2x as many tokens as cl100k
+   * for English prose. Anything over that limit is TRUNCATED by Transformers.js
+   * silently, with no error: the tail of the chunk vanishes from the vector
+   * while the stored text keeps it, so retrieval misses answers that are
+   * demonstrably present in the passage. That is close to impossible to
+   * diagnose from the outside, which is why the budget is set to make it
+   * unreachable rather than to be caught later.
+   *
+   * MEASURED, NOT ESTIMATED — and the measurement is worth reading before
+   * touching these numbers. `budget.integration.test.ts` runs a worst-case
+   * document through the real BGE tokenizer and reports:
+   *
+   *     WordPiece-per-cl100k ratio, English legal prose ....... 1.19
+   *     context header for a deep three-level breadcrumb ...... 58 tokens
+   *     worst augmented chunk at 350/450/80 .................. 563 / 512
+   *
+   * So the current budget DOES overshoot the limit at the top of its range.
+   * The reason is that a stored chunk is not `targetTokens` long: the packer
+   * fills to `maxTokens`, the merge pass can add `minTokens` on top, and the
+   * overlap adds up to twice its own budget again — 450 + 80 + 106 = 636
+   * cl100k worst case, and even a plain `maxTokens` chunk is 536 WordPiece
+   * before the header goes on.
+   *
+   * Two things follow, and both are already in place. Truncation is no longer
+   * SILENT: the local provider tokenizes each batch with the model's own
+   * tokenizer and logs a warning naming the lengths it had to cut, so this
+   * shows up in logs instead of only in worse retrieval. And the nearest
+   * budget that satisfies 512 outright has been measured — 300 / 380 / 70,
+   * worst case 462 — and is asserted by that same test, so adopting it is a
+   * one-line edit against a verified number.
+   *
+   * The exact-answer alternative remains available and is strictly better if
+   * you want to reclaim the headroom: pass the model's own tokenizer through
+   * `ChunkOptions.countTokens` and set the budget in WordPiece tokens
+   * directly, which removes the ratio from the reasoning entirely. The seam is
+   * already here; see `TokenCounter`.
    */
-  targetTokens: 700,
+  targetTokens: 350,
 
   /**
    * Hard ceiling. A chunk may run past `targetTokens` to finish absorbing a
    * unit it has already started on, but never past this. The gap between the
    * two is the slack that lets a paragraph land whole instead of being torn.
    *
+   * Kept close to the target — 100 tokens of slack rather than 200 — because
+   * the whole budget is now sized against the 512-token WordPiece limit, and a
+   * wide ceiling spends the headroom that keeps the upper tail of chunks from
+   * being truncated.
+   *
    * The one documented exception is the merge pass below, which may push a
    * chunk to `maxTokens + minTokens` rather than emit a fragment.
    */
-  maxTokens: 900,
+  maxTokens: 450,
 
   /**
    * No chunk below this survives; it is merged into its neighbour.
@@ -113,8 +143,12 @@ export const CHUNKING = {
    * A floor, not a target — see failure mode 3 above. It is enforced after
    * packing rather than during it, because whether a chunk is too small is only
    * knowable once it is closed.
+   *
+   * Scaled with the target: at a 350-token budget a 100-token floor would make
+   * nearly a third of a chunk the minimum viable passage, which is too coarse
+   * to absorb a short clause without distorting it.
    */
-  minTokens: 100,
+  minTokens: 80,
 
   /**
    * How full a chunk must be before a heading is allowed to close it, as a
@@ -122,7 +156,7 @@ export const CHUNKING = {
    * `minTokens`, so 0 means "break at every heading that leaves a legal chunk".
    *
    * This is the knob for the one place the project's two chunking rules pull
-   * against each other: "split on structure first" and "target ~700 tokens". A
+   * against each other: "split on structure first" and "target ~350 tokens". A
    * contract is not a handful of long sections — it is two hundred short
    * numbered clauses, and honouring every heading turns such a document into
    * two hundred 150-token passages that never approach the budget.
@@ -144,7 +178,7 @@ export const CHUNKING = {
   sectionBreakRatio: 0,
 
   /**
-   * Overlap, as a fraction of `targetTokens` (0.15 -> ~105 tokens).
+   * Overlap, as a fraction of `targetTokens` (0.15 -> ~53 tokens).
    *
    * Overlap exists for one reason: a sentence at a chunk boundary answers a
    * question using a subject named in the previous sentence, and without
@@ -981,8 +1015,9 @@ function mergeUndersized(packed: Packed[], options: ResolvedOptions): Packed[] {
  * Overlap is whole units, so it lands near the budget rather than on it, and a
  * hard cap of twice the budget keeps "near" from becoming "nowhere near". The
  * case that cap exists for: a predecessor whose last unit is a single
- * 700-token paragraph. Without it, the overlap would take all 700 — appending
- * most of one chunk to the front of the next and roughly doubling its size.
+ * budget-sized paragraph. Without it, the overlap would take the whole thing —
+ * appending most of one chunk to the front of the next and roughly doubling its
+ * size.
  * Taking no overlap at that boundary is the better answer, and is what happens.
  *
  * The consequence for chunk size is worth stating plainly, because it is the

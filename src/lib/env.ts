@@ -70,29 +70,32 @@ const serverSchema = z
     // Embeddings, behind the EmbeddingProvider interface.
     //
     // `local` runs the model in this Node process via Transformers.js: no API
-    // call, no key, no per-token cost. `openai` is kept as an escape hatch and
-    // is the only provider that needs a key.
+    // call, no key, no per-token cost, nothing metered. It is the only value
+    // this enum accepts, and that is enforcement rather than documentation —
+    // ingestion embeds every chunk of every upload, so a metered embedder
+    // turns each document into a bill, and this project runs on free tiers
+    // with no card on file. Adding a provider means adding it here AND to the
+    // registry in src/lib/embeddings/provider.ts, which spells out what may
+    // and may not go in it.
     //
     // Changing EMBEDDING_MODEL means RE-INGESTING every document, not editing
     // this value in place — embedding spaces are never mixed, and the
     // dimension is part of the space.
-    EMBEDDING_PROVIDER: z.enum(["local", "openai"]).default("local"),
+    EMBEDDING_PROVIDER: z.enum(["local"]).default("local"),
     EMBEDDING_MODEL: z.string().min(1).default("Xenova/bge-small-en-v1.5"),
     EMBEDDING_DIMENSIONS: z.coerce.number().int().positive().default(384),
-    OPENAI_API_KEY: optional(z.string().min(1)),
+
+    // Where Transformers.js caches the downloaded model weights.
+    //
+    // Its default lives inside node_modules, which is READ-ONLY on Vercel. The
+    // local provider falls back to /tmp there — the only writable path in a
+    // function, and one that survives for the life of a warm instance. Set
+    // this explicitly for a container deployment with a real volume.
+    TRANSFORMERS_CACHE_DIR: optional(z.string().min(1)),
 
     // Optional seeded account, so a reviewer can sign in without registering.
     DEMO_USER_EMAIL: optional(z.email()),
     DEMO_USER_PASSWORD: optional(z.string().min(8)),
-  })
-  .superRefine((value, ctx) => {
-    if (value.EMBEDDING_PROVIDER === "openai" && !value.OPENAI_API_KEY) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["OPENAI_API_KEY"],
-        message: "is required when EMBEDDING_PROVIDER is openai",
-      });
-    }
   });
 
 type ServerEnv = z.infer<typeof serverSchema>;

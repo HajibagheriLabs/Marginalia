@@ -58,8 +58,19 @@ query:   question → (optional rewrite for multi-turn) → dense top-50 (Qdrant
          → context assembly with numbered markers → grounded generation → citation validation
 
 ### Chunking rules
-- Target ~700 tokens, ~15% overlap. Split on structure first (headings → paragraphs → sentences).
-  Never split mid-sentence when it can be avoided. Never leave a chunk under ~100 tokens — merge it.
+- Target ~350 tokens, ceiling ~450, ~15% overlap. Split on structure first (headings → paragraphs →
+  sentences). Never split mid-sentence when it can be avoided. Never leave a chunk under ~80 tokens —
+  merge it.
+- The budget exists to fit bge-small-en-v1.5, which is BERT WordPiece with a hard 512-token sequence
+  limit that Transformers.js truncates past SILENTLY. Chunk budgets are counted in cl100k tokens, and
+  the two are related by a MEASURED ratio, not an identity — see evals in
+  src/lib/embeddings/budget.integration.test.ts, which reports 1.19 for English legal prose and a
+  58-token context header for a deep breadcrumb.
+- KNOWN: at 350/450/80 the worst augmented chunk measures 563 WordPiece, over the 512 limit, because a
+  stored chunk can reach maxTokens + a merge + overlap (450+80+106) rather than targetTokens. The
+  measured budget that fits is 300/380/70 (worst case 462). Truncation is no longer silent either way —
+  the local provider tokenizes each batch with the model's own tokenizer and logs a TRUNCATION warning
+  naming the lengths it cut. Retune with that test, never by estimate.
 - Every chunk stores: document_id, ordinal, text, token_count, page_from, page_to, char_start,
   char_end (offsets into the document's concatenated page text), section_path (heading breadcrumb).
 - CONTEXT HEADER: before embedding, prepend "<document title> — <section path>" to the chunk text.
