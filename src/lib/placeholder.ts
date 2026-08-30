@@ -1,99 +1,16 @@
-import type { DocumentStatus } from "@/db/schema";
-
 /**
  * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ SCAFFOLDING — DELETE WHEN INGESTION LANDS.                               │
+ * │ SCAFFOLDING — DELETE WHEN TEXT EXTRACTION LANDS.                         │
  * │                                                                          │
- * │ There is no ingestion pipeline yet, so the library rail and the reading  │
- * │ pane have nothing to render. This module supplies stand-in data so the   │
- * │ shell can be built and judged: every document status appears at least    │
- * │ once, and the sample page is long enough to evaluate 17px Source Serif 4 │
- * │ at a real reading measure.                                               │
+ * │ Documents now come out of Postgres, but nothing extracts their text yet, │
+ * │ so there is still no real page to render. This is a stand-in page, long  │
+ * │ enough to judge 17px Source Serif 4 at a real reading measure.           │
  * │                                                                          │
- * │ Nothing imports this except the /app placeholder routes. When documents  │
- * │ come out of Postgres, this file goes away and the routes swap their data │
- * │ source — the components below it do not change.                          │
+ * │ The reading pane renders it for any document that reaches `ready`, which │
+ * │ nothing does yet — so today it is only visible in the component          │
+ * │ inventory at /app/components.                                           │
  * └──────────────────────────────────────────────────────────────────────────┘
  */
-
-export interface PlaceholderDocument {
-  id: string;
-  title: string;
-  /** Null until extraction has counted the pages. */
-  pageCount: number | null;
-  status: DocumentStatus;
-  /** Present only on `failed`: what happened and what to do about it. */
-  errorMessage?: string;
-}
-
-/**
- * Ordered newest first, the way the rail will order real rows. Between them
- * these cover all seven states of the ingestion state machine.
- */
-export const PLACEHOLDER_DOCUMENTS: PlaceholderDocument[] = [
-  {
-    id: "msa-northwind",
-    title: "Master Services Agreement — Northwind Systems",
-    pageCount: 24,
-    status: "ready",
-  },
-  {
-    id: "afib-guideline",
-    title: "Clinical practice guideline: atrial fibrillation",
-    pageCount: 96,
-    status: "ready",
-  },
-  {
-    id: "dpa-rev-c",
-    title: "Data processing addendum, rev. C",
-    pageCount: 12,
-    status: "ready",
-  },
-  {
-    id: "ai-act",
-    title: "EU AI Act — consolidated text",
-    pageCount: 144,
-    status: "indexing",
-  },
-  {
-    id: "handbook-2026",
-    title: "Employee handbook 2026",
-    pageCount: 58,
-    status: "embedding",
-  },
-  {
-    id: "board-minutes-q3",
-    title: "Board minutes, Q3",
-    pageCount: 9,
-    status: "chunking",
-  },
-  {
-    id: "supplier-terms",
-    title: "Supplier terms and conditions",
-    pageCount: null,
-    status: "extracting",
-  },
-  {
-    id: "termination-addendum",
-    title: "Termination addendum",
-    pageCount: null,
-    status: "uploaded",
-  },
-  {
-    id: "lease-scan",
-    title: "Warehouse lease (scanned)",
-    pageCount: 31,
-    status: "failed",
-    errorMessage:
-      "Extraction found no text on any page. This looks like a scan of a printed document. Upload a searchable PDF, or run OCR on it first.",
-  },
-];
-
-export function findPlaceholderDocument(
-  id: string,
-): PlaceholderDocument | undefined {
-  return PLACEHOLDER_DOCUMENTS.find((document) => document.id === id);
-}
 
 /** A stand-in page: heading breadcrumb, body text, page number. */
 export interface PlaceholderPage {

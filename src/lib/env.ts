@@ -55,12 +55,30 @@ const serverSchema = z
     // Model gateway.
     OPENROUTER_API_KEY: z.string().min(1),
     OPENROUTER_MODEL: z.string().min(1).default("anthropic/claude-sonnet-5"),
+    // Tried in order when the primary model is rate-limited or unavailable.
+    // Comma-separated in the environment; an array everywhere else.
+    OPENROUTER_FALLBACK_MODELS: z
+      .string()
+      .default("")
+      .transform((value) =>
+        value
+          .split(",")
+          .map((slug) => slug.trim())
+          .filter(Boolean),
+      ),
 
-    // Embeddings, behind the EmbeddingProvider interface. Changing the model
-    // means re-ingesting every document, not editing this value in place —
-    // embedding spaces are never mixed.
-    EMBEDDING_PROVIDER: z.enum(["openai"]).default("openai"),
-    EMBEDDING_MODEL: z.string().min(1).default("text-embedding-3-small"),
+    // Embeddings, behind the EmbeddingProvider interface.
+    //
+    // `local` runs the model in this Node process via Transformers.js: no API
+    // call, no key, no per-token cost. `openai` is kept as an escape hatch and
+    // is the only provider that needs a key.
+    //
+    // Changing EMBEDDING_MODEL means RE-INGESTING every document, not editing
+    // this value in place — embedding spaces are never mixed, and the
+    // dimension is part of the space.
+    EMBEDDING_PROVIDER: z.enum(["local", "openai"]).default("local"),
+    EMBEDDING_MODEL: z.string().min(1).default("Xenova/bge-small-en-v1.5"),
+    EMBEDDING_DIMENSIONS: z.coerce.number().int().positive().default(384),
     OPENAI_API_KEY: optional(z.string().min(1)),
 
     // Optional seeded account, so a reviewer can sign in without registering.

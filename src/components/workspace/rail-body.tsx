@@ -1,14 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { Upload } from "lucide-react";
 
 import { DocumentListItem } from "@/components/document-list-item";
 import { EmptyState } from "@/components/empty-state";
-import { PlaceholderAction } from "@/components/workspace/placeholder-action";
+import { UploadButton } from "@/components/upload/upload-button";
+import { UploadHint } from "@/components/upload/upload-dropzone";
 import { UserMenu } from "@/components/workspace/user-menu";
 import { APP_NAME } from "@/lib/brand";
-import type { PlaceholderDocument } from "@/lib/placeholder";
+import type { DocumentListItemRow } from "@/lib/documents";
 import { cn } from "@/lib/utils";
 
 /**
@@ -27,7 +27,7 @@ export function RailBody({
   headerAction,
   onNavigate,
 }: {
-  documents: PlaceholderDocument[];
+  documents: DocumentListItemRow[];
   activeDocumentId: string | null;
   user: { name: string; email: string };
   /** The 56px icon rail. Never used inside the mobile drawer. */
@@ -57,17 +57,20 @@ export function RailBody({
         {headerAction}
       </div>
 
-      <div className={cn("shrink-0", collapsed ? "flex justify-center p-2" : "p-3")}>
-        <PlaceholderAction
-          variant="outline"
-          size={collapsed ? "icon-sm" : "default"}
+      <div
+        className={cn(
+          "shrink-0",
+          collapsed ? "flex justify-center p-2" : "flex flex-col gap-1.5 p-3",
+        )}
+      >
+        <UploadButton
+          collapsed={collapsed}
           className={collapsed ? undefined : "w-full"}
-          aria-label={collapsed ? "Upload a document" : undefined}
-          note="Uploading arrives with the ingestion pipeline."
-        >
-          <Upload aria-hidden />
-          {collapsed ? null : "Upload"}
-        </PlaceholderAction>
+        />
+        {/* The accepted types and the size cap, stated before anything is
+            picked. A limit you only meet by failing is a limit the interface
+            chose not to mention. */}
+        {collapsed ? null : <UploadHint className="text-[11px] leading-4" />}
       </div>
 
       {collapsed ? null : (

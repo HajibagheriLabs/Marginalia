@@ -15,7 +15,7 @@ import {
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { RailBody } from "@/components/workspace/rail-body";
 import { APP_NAME } from "@/lib/brand";
-import type { PlaceholderDocument } from "@/lib/placeholder";
+import type { DocumentListItemRow } from "@/lib/documents";
 import {
   RAIL_COOKIE,
   RAIL_WIDTH,
@@ -45,7 +45,7 @@ export function LibraryRail({
   user,
   initialCollapsed,
 }: {
-  documents: PlaceholderDocument[];
+  documents: DocumentListItemRow[];
   user: { name: string; email: string };
   initialCollapsed: boolean;
 }) {

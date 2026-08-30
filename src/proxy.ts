@@ -68,7 +68,12 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Everything except the auth API, Next's internals, and static assets.
-    "/((?!api/auth|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff2?)$).*)",
+    // Everything except API routes, Next's internals, and static assets.
+    //
+    // ALL of /api is excluded, not just /api/auth. An API route answers with a
+    // status code; redirecting an unauthenticated POST to /sign-in would hand
+    // the caller a 307 and a page of HTML instead of a 401 it can act on. Those
+    // routes read the session themselves — see src/app/api/blob/upload/route.ts.
+    "/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff2?)$).*)",
   ],
 };

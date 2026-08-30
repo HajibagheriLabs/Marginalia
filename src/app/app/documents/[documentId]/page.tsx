@@ -1,35 +1,32 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
 
 import { ConversationPane } from "@/components/workspace/conversation-pane";
 import { ReadingPane } from "@/components/workspace/reading-pane";
 import { Workbench } from "@/components/workspace/workbench";
-import { findPlaceholderDocument } from "@/lib/placeholder";
+import { requireDocumentAccess } from "@/lib/auth-server";
 import { readWorkspacePrefs } from "@/lib/workspace-prefs.server";
 
 /**
  * Reading one document.
  *
- * The document is looked up in the placeholder list for now. When ingestion
- * lands this becomes `requireDocumentAccess(documentId)` from
- * src/lib/auth-server.ts — which returns the row and proves ownership in one
- * call, and 404s identically whether the document is missing or belongs to
- * someone else. The `notFound()` below is already the shape of that answer.
+ * `requireDocumentAccess` is the ownership boundary: it returns the row and
+ * proves the session owns it in one call, and it answers 404 identically
+ * whether the id is malformed, missing, soft-deleted, or belongs to somebody
+ * else. A 403 would turn a document id into an oracle.
  */
 export async function generateMetadata({
   params,
 }: PageProps<"/app/documents/[documentId]">): Promise<Metadata> {
   const { documentId } = await params;
-  const document = findPlaceholderDocument(documentId);
-  return { title: document?.title ?? "Document" };
+  const { document } = await requireDocumentAccess(documentId);
+  return { title: document.title };
 }
 
 export default async function DocumentPage({
   params,
 }: PageProps<"/app/documents/[documentId]">) {
   const { documentId } = await params;
-  const document = findPlaceholderDocument(documentId);
-  if (!document) notFound();
+  const { document } = await requireDocumentAccess(documentId);
 
   const { conversationWidth } = await readWorkspacePrefs();
   const ready = document.status === "ready";

@@ -34,7 +34,16 @@ project, deployed on free tiers. Build incrementally, explain decisions, surface
   covers multi-tenancy; this project is about retrieval.)
 - Model gateway: OpenRouter via the Vercel AI SDK (`ai`, `@ai-sdk/react`,
   `@openrouter/ai-sdk-provider`). Streaming with streamText / useChat.
-- Embeddings: OpenAI text-embedding-3-small by default, behind an EmbeddingProvider interface.
+- Embeddings: computed LOCALLY, inside the Node.js server process, via Transformers.js. No embedding
+  API, no per-token cost, no API key. `EMBEDDING_PROVIDER=local`,
+  `EMBEDDING_MODEL=Xenova/bge-small-en-v1.5`, `EMBEDDING_DIMENSIONS=384`. Still behind the
+  EmbeddingProvider interface, so a hosted provider can be swapped in without touching call sites.
+  - Load the pipeline ONCE as a module-level singleton. Constructing it per request re-reads the
+    model weights and turns a 20 ms call into a multi-second one.
+  - BGE is ASYMMETRIC. Prefix a QUERY with "Represent this sentence for searching relevant
+    passages: " and leave PASSAGES unprefixed. Getting this backwards costs recall silently.
+  - Deployment consequence: local inference needs the Node runtime and a warm process with room for
+    the weights. Ingestion and query embedding must never run on the Edge runtime.
 - File storage: Vercel Blob, uploaded CLIENT-SIDE with a short-lived token.
 - PDF: `unpdf` for server-side text extraction; `react-pdf` (PDF.js) for in-browser rendering.
 - Validation: Zod at every boundary. Tests: Vitest + Playwright.
@@ -57,7 +66,8 @@ query:   question → (optional rewrite for multi-turn) → dense top-50 (Qdrant
   Embed the augmented text; store and display the ORIGINAL text. Never show the header to the user.
 
 ### Vector store rules (CRITICAL — this is the security boundary)
-- One Qdrant collection, cosine distance, dimension from the embedding config.
+- One Qdrant collection, cosine distance, dimension from the embedding config (384 for
+  bge-small-en-v1.5). Changing the model changes the dimension, which means a new collection.
 - Payload: user_id, document_id, chunk_id, page_from, page_to. Payload INDEXES on user_id and
   document_id (filtered search is slow and scales badly without them).
 - EVERY search carries a filter on user_id AND the selected document_ids. A vector search without a

@@ -20,8 +20,10 @@ import {
 import { StatusDot } from "@/components/status-dot";
 import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { PlaceholderPageContent } from "@/components/workspace/placeholder-page";
 import { ALL_DOCUMENT_STATUSES } from "@/lib/document-status";
 import { INKS, inkVar } from "@/lib/ink";
+import { PLACEHOLDER_PAGE } from "@/lib/placeholder";
 
 /**
  * SCAFFOLDING — a working inventory of the component layer.
@@ -294,6 +296,17 @@ export function ComponentGallery() {
             <p className="num mt-6 text-mono-xs text-paper-text-muted">
               Page 14
             </p>
+          </PaperSheet>
+        </Section>
+
+        <Section
+          title="Reading experience"
+          note="A full page at the real measure: 17px Source Serif 4, 1.65 leading, margins setting a ~65 character column. Nothing extracts document text yet, so this is a stand-in."
+        >
+          {/* The sheet at its real 720px width, so the column really is the
+              measure the design specifies rather than the gallery's. */}
+          <PaperSheet>
+            <PlaceholderPageContent page={PLACEHOLDER_PAGE} />
           </PaperSheet>
         </Section>
       </div>
