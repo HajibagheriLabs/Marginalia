@@ -2,12 +2,12 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Trash2 } from "lucide-react";
+import { RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
-import { deleteDocument } from "@/server/actions/documents";
+import { deleteDocument, retryIngestion } from "@/server/actions/documents";
 
 /**
  * Removing a document from the reading pane header.
@@ -62,5 +62,40 @@ export function DocumentActions({
         onConfirm={confirm}
       />
     </>
+  );
+}
+
+/**
+ * Re-run ingestion after a failure.
+ *
+ * The button exists because the state machine makes it cheap: every stage is
+ * idempotent, so "Retry" is genuinely just running the stage again rather than
+ * a repair path with its own edge cases. It does not promise success — a
+ * scanned PDF will fail again, with the same message — but a transient failure
+ * costs one click instead of a re-upload.
+ */
+export function RetryIngestionButton({ documentId }: { documentId: string }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      disabled={pending}
+      onClick={() =>
+        startTransition(async () => {
+          const result = await retryIngestion(documentId);
+          if (!result.ok) {
+            toast.error(result.error);
+            return;
+          }
+          router.refresh();
+        })
+      }
+    >
+      <RotateCcw aria-hidden />
+      {pending ? "Retrying…" : "Retry"}
+    </Button>
   );
 }

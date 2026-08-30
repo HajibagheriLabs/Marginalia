@@ -145,9 +145,10 @@ export async function registerUploadedDocument(
     return discard("That upload could not be recorded.");
   }
 
-  // The single seam where ingestion is triggered. Currently a no-op: the
-  // document sits in `uploaded` until the extraction stage lands.
-  await startIngestion(created.id);
+  // The single seam where ingestion is triggered. It schedules extraction to
+  // run after this response is sent, so the upload UI is not held open while a
+  // large PDF is parsed.
+  await startIngestion(created.id, user.id);
 
   revalidatePath("/app", "layout");
   return { ok: true, documentId: created.id };
@@ -188,6 +189,36 @@ export async function deleteDocument(
     // storage leak to clean up, not a failure to report back.
     console.error("[documents] failed to delete blob", error);
   }
+
+  revalidatePath("/app", "layout");
+  return { ok: true };
+}
+
+/**
+ * Re-run ingestion for a document that failed.
+ *
+ * Every stage is idempotent and independently re-runnable, which is what makes
+ * this a one-line action rather than a repair routine: extraction deletes the
+ * document's pages and writes them again inside a transaction, so re-running it
+ * on a half-extracted document is indistinguishable from running it on a fresh
+ * one. `documents.failed_stage` records where it died, so a resumable pipeline
+ * later can restart from that stage instead of the beginning.
+ */
+export async function retryIngestion(
+  documentId: string,
+): Promise<ActionResult> {
+  const { user, document } = await requireDocumentAccess(documentId);
+
+  await db
+    .update(documents)
+    .set({
+      status: "uploaded",
+      failedStage: null,
+      errorMessage: null,
+    })
+    .where(and(eq(documents.id, document.id), eq(documents.userId, user.id)));
+
+  await startIngestion(document.id, user.id);
 
   revalidatePath("/app", "layout");
   return { ok: true };

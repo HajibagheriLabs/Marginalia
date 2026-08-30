@@ -3,14 +3,16 @@ import { FileText } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorState } from "@/components/error-state";
 import { UploadDropzone } from "@/components/upload/upload-dropzone";
-import { DocumentActions } from "@/components/workspace/document-actions";
-import { PlaceholderAction } from "@/components/workspace/placeholder-action";
+import {
+  DocumentActions,
+  RetryIngestionButton,
+} from "@/components/workspace/document-actions";
 import { PlaceholderPageContent } from "@/components/workspace/placeholder-page";
 import { ReadingSurface } from "@/components/workspace/reading-surface";
 import type { Document } from "@/db/schema";
 import { DOCUMENT_STATUS_META } from "@/lib/document-status";
 import { PLACEHOLDER_PAGE } from "@/lib/placeholder";
-import { formatBytes } from "@/lib/upload";
+import { formatBytes, formatPageCount } from "@/lib/upload";
 
 /**
  * The centre pane: a slim monochrome header, then the table with the sheet on
@@ -32,7 +34,7 @@ export function ReadingPane({ document }: { document: Document }) {
           <span className="num text-mono-xs text-text-faint">
             {document.pageCount === null
               ? formatBytes(document.byteSize)
-              : `${document.pageCount} pages`}
+              : formatPageCount(document.mimeType, document.pageCount)}
           </span>
           <DocumentActions documentId={document.id} title={document.title} />
         </div>
@@ -51,15 +53,7 @@ export function ReadingPane({ document }: { document: Document }) {
               className="max-w-[480px]"
               title="This document could not be processed."
               detail={document.errorMessage ?? undefined}
-              action={
-                <PlaceholderAction
-                  variant="outline"
-                  size="sm"
-                  note="Retry arrives with the ingestion pipeline."
-                >
-                  Retry
-                </PlaceholderAction>
-              }
+              action={<RetryIngestionButton documentId={document.id} />}
             />
           ) : (
             <EmptyState

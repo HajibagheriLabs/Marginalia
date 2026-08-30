@@ -218,3 +218,22 @@ export function isOwnedBlobPathname(pathname: string, userId: string): boolean {
   }
   return matchAcceptedType(filename) !== null;
 }
+
+/**
+ * What one unit of `documents.page_count` actually is.
+ *
+ * A PDF has real pages, so a citation may say "page 14" and mean it. DOCX,
+ * TXT, and Markdown have no pages at all — Word's own page numbers depend on
+ * the printer driver and the fonts installed — so extraction synthesizes
+ * equal-sized blocks instead. The UI must name them differently: a citation
+ * must never claim a precision the source document does not have.
+ */
+export function pageUnitFor(mimeType: string): "page" | "block" {
+  return mimeType === "application/pdf" ? "page" : "block";
+}
+
+/** "24 pages" for a PDF, "7 blocks" for anything paginated by us. */
+export function formatPageCount(mimeType: string, count: number): string {
+  const unit = pageUnitFor(mimeType);
+  return `${count} ${unit}${count === 1 ? "" : "s"}`;
+}
