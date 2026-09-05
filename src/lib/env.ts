@@ -24,6 +24,24 @@ const postgresUrl = z
     "must start with postgres:// or postgresql://",
   );
 
+/**
+ * An OpenRouter model id this project is allowed to call.
+ *
+ * The `:free` suffix is OpenRouter's own marker for a zero-cost variant, and it
+ * is the only thing standing between a config typo and a bill. Checked as a
+ * suffix rather than against a hard-coded allowlist because the free pool
+ * changes weekly — an allowlist would be stale within a month and would start
+ * rejecting models that are perfectly free.
+ */
+const freeModelId = z
+  .string()
+  .min(1)
+  .refine(
+    (value) => value.endsWith(":free"),
+    "must be an OpenRouter model id ending in `:free` — this project runs at " +
+      "zero cost with no card on file. See https://openrouter.ai/models?max_price=0",
+  );
+
 const serverSchema = z
   .object({
     NODE_ENV: z
@@ -53,19 +71,35 @@ const serverSchema = z
     QDRANT_COLLECTION: z.string().min(1).default("marginalia_chunks"),
 
     // Model gateway.
+    //
+    // EVERY MODEL ID MUST END IN `:free`, and that is checked HERE rather than
+    // at request time. This project runs with no card on file, and OpenRouter
+    // bills a paid model the moment it is called — by which point the money is
+    // spent and the only signal is an invoice. A typo in a model slug, or a
+    // copied-in example from the docs, is the whole failure mode. Refusing to
+    // boot is loud, immediate, and free; refusing at request time is neither
+    // of the first two.
+    //
+    // The live list of free models is at https://openrouter.ai/models?max_price=0
+    // (or GET https://openrouter.ai/api/v1/models, filtering `id` on the
+    // `:free` suffix). It CHANGES — models are delisted without notice — which
+    // is why there is a fallback list at all.
     OPENROUTER_API_KEY: z.string().min(1),
-    OPENROUTER_MODEL: z.string().min(1).default("anthropic/claude-sonnet-5"),
-    // Tried in order when the primary model is rate-limited or unavailable.
-    // Comma-separated in the environment; an array everywhere else.
+    OPENROUTER_MODEL: freeModelId.default("z-ai/glm-5.2:free"),
+    // Tried in order when the primary model is delisted, rate-limited, or
+    // erroring. Comma-separated in the environment; an array everywhere else.
     OPENROUTER_FALLBACK_MODELS: z
       .string()
-      .default("")
+      .default(
+        "minimax/minimax-m3:free,google/gemma-4-31b-it:free,nvidia/nemotron-3-super-120b-a12b:free",
+      )
       .transform((value) =>
         value
           .split(",")
           .map((slug) => slug.trim())
           .filter(Boolean),
-      ),
+      )
+      .pipe(z.array(freeModelId)),
 
     // Embeddings, behind the EmbeddingProvider interface.
     //

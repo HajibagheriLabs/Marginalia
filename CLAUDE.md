@@ -113,11 +113,29 @@ query:   question → (optional rewrite for multi-turn) → dense top-50 (Qdrant
 ### Generation rules
 - The system prompt instructs: answer ONLY from the numbered passages provided; attach a [n] marker to
   every factual claim; if the passages do not contain the answer, say so plainly and suggest what to
-  search for instead; never invent a marker number.
+  search for instead; never invent a marker number. It lives alone in src/lib/llm/prompt.ts and carries
+  a PROMPT_VERSION — a grounding score is meaningless without knowing which prompt produced it.
 - After generation, parse markers out of the text server-side, discard any that don't map to a
   retrieved passage, log the violation, and persist the surviving citations as rows linked to their
-  chunks. An answer with an invalid citation is a bug, not a cosmetic issue.
-- "These documents don't answer that" is a CORRECT response and is covered by the eval set.
+  chunks. An answer with an invalid citation is a bug, not a cosmetic issue. NEVER "repair" a bad
+  marker by guessing which passage was meant — that invents evidence to cover for invented evidence.
+- "These documents don't answer that" is a CORRECT response and is covered by the eval set. When
+  retrieval returns nothing above the floor, answer it WITHOUT calling the model: the sentence is
+  already known, and a model handed no passages sometimes answers from its own knowledge instead.
+- EVERY OpenRouter model id MUST end in `:free`, enforced in env.ts at boot, primary and fallbacks
+  alike. A paid slug bills the moment it is called and the only signal is an invoice. Free models are
+  delisted without notice and share ~20 req/min, ~200/day, so OPENROUTER_FALLBACK_MODELS is an ordered
+  pool: fail over on 404/408/429/5xx, never on 401/403/400/422, never to a paid model, and record the
+  model that ACTUALLY served the answer on the message row. Live list:
+  https://openrouter.ai/models?max_price=0
+- AI SDK 7 does NOT throw provider errors from the stream iterator. `fullStream` yields
+  `{type:'error'}` and then COMPLETES NORMALLY, so a try/catch around `textStream` never fires and a
+  delisted model produces a cheerful empty answer. Iterate `fullStream`, capture the error part, and
+  rethrow — see src/lib/llm/runner.ts. The fullStream text part is `.text`, not `.delta`.
+- Failover is only possible BEFORE the first token reaches the client, so the `start` event is held
+  until the first delta. Once text is on screen, switching models would duplicate or truncate it.
+- costCents is 0 on the free pool and that is the REAL number, not an estimate. Record tokens and
+  latency, which are real; never fabricate a notional price.
 
 ## Ingestion job model
 - documents.status: uploaded → extracting → chunking → embedding → indexing → ready | failed
