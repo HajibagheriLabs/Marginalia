@@ -15,6 +15,7 @@ import {
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { RailBody } from "@/components/workspace/rail-body";
 import { APP_NAME } from "@/lib/brand";
+import type { ConversationSummary } from "@/lib/chat/types";
 import type { DocumentListItemRow } from "@/lib/documents";
 import {
   RAIL_COOKIE,
@@ -42,10 +43,12 @@ import {
  */
 export function LibraryRail({
   documents,
+  conversations,
   user,
   initialCollapsed,
 }: {
   documents: DocumentListItemRow[];
+  conversations: ConversationSummary[];
   user: { name: string; email: string };
   initialCollapsed: boolean;
 }) {
@@ -91,6 +94,7 @@ export function LibraryRail({
           </DialogDescription>
           <RailBody
             documents={documents}
+            conversations={conversations}
             activeDocumentId={activeDocumentId}
             user={user}
             onNavigate={() => setDrawerOpen(false)}
@@ -117,6 +121,7 @@ export function LibraryRail({
         >
           <RailBody
             documents={documents}
+            conversations={conversations}
             activeDocumentId={activeDocumentId}
             user={user}
             collapsed={collapsed}

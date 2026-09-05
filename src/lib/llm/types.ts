@@ -29,6 +29,14 @@ export type AnswerEvent =
   | { type: "start"; passages: RetrievedPassage[]; model: string }
   | { type: "text"; delta: string }
   | { type: "citations"; citations: CitationRecord[] }
+  /**
+   * THE RETRIEVAL TRACE — every candidate either channel returned, with its
+   * rank and score in each. Yielded AFTER the answer rather than before it,
+   * even though it is known before the first token: it is a hundred rows of
+   * JSON, and putting it on the wire ahead of the answer would delay the first
+   * word to deliver a table nobody has expanded yet.
+   */
+  | { type: "trace"; candidates: RetrievalCandidate[] }
   | { type: "done"; message: AnswerSummary }
   | { type: "error"; message: string };
 

@@ -10,7 +10,7 @@ import {
 import { ConversationPane } from "@/components/workspace/conversation-pane";
 import { Workbench } from "@/components/workspace/workbench";
 import { requireUser } from "@/lib/auth-server";
-import { countUserDocuments } from "@/lib/documents";
+import { listUserDocuments } from "@/lib/documents";
 import { readWorkspacePrefs } from "@/lib/workspace-prefs.server";
 
 export const metadata: Metadata = { title: "Workspace" };
@@ -20,17 +20,22 @@ export const metadata: Metadata = { title: "Workspace" };
  * same panes, same widths — so opening a document changes the contents and not
  * the layout.
  *
+ * The conversation pane is live here and starts with an EMPTY SCOPE: this is a
+ * new conversation with nothing selected yet, and the composer says so. Picking
+ * documents in the scope selector is enough to ask a question; the conversation
+ * row itself is written by the first question, not by arriving on this page.
+ *
  * This is also the primary drop target for a first upload, so the empty state
  * states the accepted types and the size cap up front.
  */
 export default async function WorkspacePage() {
   const user = await requireUser();
-  const [{ conversationWidth }, documentCount] = await Promise.all([
+  const [{ conversationWidth }, documents] = await Promise.all([
     readWorkspacePrefs(),
-    countUserDocuments(user.id),
+    listUserDocuments(user.id),
   ]);
 
-  const empty = documentCount === 0;
+  const empty = documents.length === 0;
 
   return (
     <Workbench
@@ -55,9 +60,15 @@ export default async function WorkspacePage() {
       }
       conversation={
         <ConversationPane
-          documentsInScope={0}
-          canAsk={false}
-          disabledReason="Open a document before asking a question."
+          key="new"
+          conversation={null}
+          initialMessages={[]}
+          initialScope={[]}
+          documents={documents.map((row) => ({
+            id: row.id,
+            title: row.title,
+            status: row.status,
+          }))}
         />
       }
     />

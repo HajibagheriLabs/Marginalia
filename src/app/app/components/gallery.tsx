@@ -3,9 +3,15 @@
 import { useState, type CSSProperties } from "react";
 import { FileText, Inbox } from "lucide-react";
 
-import { CitationChip } from "@/components/citation-chip";
+import {
+  CitationChip,
+  CitationChipWithPreview,
+} from "@/components/citation-chip";
 import { Composer } from "@/components/composer";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { AnswerMarkdown } from "@/components/conversation/answer-markdown";
+import { AnswerMeta } from "@/components/conversation/answer-meta";
+import { RetrievalTrace } from "@/components/conversation/retrieval-trace";
 import { DocumentListItem } from "@/components/document-list-item";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorState } from "@/components/error-state";
@@ -21,6 +27,7 @@ import { StatusDot } from "@/components/status-dot";
 import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { PlaceholderPageContent } from "@/components/workspace/placeholder-page";
+import type { UITraceRow } from "@/lib/chat/types";
 import { ALL_DOCUMENT_STATUSES } from "@/lib/document-status";
 import { INKS, inkVar } from "@/lib/ink";
 import { PLACEHOLDER_PAGE } from "@/lib/placeholder";
@@ -53,6 +60,87 @@ function Section({
     </section>
   );
 }
+
+/** One answer, exercising every block the parser supports. */
+const SAMPLE_ANSWER = `Either party may terminate for convenience on **sixty (60) days** written notice [1]. Two things follow from that:
+
+- Fees accrued to the effective date stay payable within thirty days [1].
+- Work in progress is invoiced at the \`T&M\` rate in the rate card [2].
+
+| Trigger | Notice | Cure |
+| :--- | ---: | :---: |
+| Convenience | 60 days | — |
+| Material breach | 30 days | 15 days [3] |
+
+Nothing in these documents sets a cure period for late delivery. Try the statement of work — delivery terms usually sit there rather than in the master agreement.`;
+
+/** A trace with a dense-only hit, a lexical-only hit, and a rejected candidate. */
+const SAMPLE_TRACE: UITraceRow[] = [
+  {
+    chunkId: "a",
+    documentId: "d1",
+    documentTitle: "Master Services Agreement",
+    snippet:
+      "Either party may terminate this Agreement for convenience upon sixty (60) days prior written notice to the other party.",
+    pageFrom: 14,
+    pageTo: 14,
+    denseRank: 1,
+    denseScore: 0.712,
+    lexicalRank: 2,
+    lexicalScore: 0.184,
+    rrfScore: 0.0323,
+    rerankScore: null,
+    used: true,
+  },
+  {
+    chunkId: "b",
+    documentId: "d1",
+    documentTitle: "Master Services Agreement",
+    snippet:
+      "Fees accrued through the effective date of termination remain payable within thirty (30) days of the final invoice.",
+    pageFrom: 14,
+    pageTo: 15,
+    denseRank: 4,
+    denseScore: 0.618,
+    lexicalRank: null,
+    lexicalScore: null,
+    rrfScore: 0.0156,
+    rerankScore: null,
+    used: true,
+  },
+  {
+    chunkId: "c",
+    documentId: "d2",
+    documentTitle: "Statement of Work 04",
+    snippet:
+      "Material breach may be cured within fifteen (15) days of written notice describing the breach in reasonable detail.",
+    pageFrom: 2,
+    pageTo: 2,
+    denseRank: null,
+    denseScore: null,
+    lexicalRank: 1,
+    lexicalScore: 0.241,
+    rrfScore: 0.0164,
+    rerankScore: null,
+    used: true,
+  },
+  {
+    chunkId: "d",
+    documentId: "d1",
+    documentTitle: "Master Services Agreement",
+    snippet:
+      "Notices under this Agreement are effective on receipt and must be sent to the addresses set out in Schedule 1.",
+    pageFrom: 31,
+    pageTo: 31,
+    denseRank: 9,
+    denseScore: 0.501,
+    lexicalRank: 18,
+    lexicalScore: 0.031,
+    rrfScore: 0.0272,
+    rerankScore: null,
+    used: false,
+  },
+];
 
 export function ComponentGallery() {
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -157,6 +245,20 @@ export function ComponentGallery() {
             ))}
             <CitationChip marker={5} ink="citrine" active />
           </div>
+          <p className="text-body-sm text-text-muted">
+            Hover or focus the chip below. The preview is a popover, so it
+            carries the overlay shadow — but the quote inside it is paper.
+          </p>
+          <div>
+            <CitationChipWithPreview
+              marker={1}
+              ink="citrine"
+              documentTitle="Master Services Agreement"
+              pageFrom={14}
+              pageTo={14}
+              quotedText="Either party may terminate this Agreement for convenience upon sixty (60) days prior written notice to the other party. Fees accrued through the effective date of termination remain payable within thirty (30) days."
+            />
+          </div>
         </Section>
 
         <Section
@@ -184,15 +286,96 @@ export function ComponentGallery() {
         </Section>
 
         <Section
+          title="AnswerMarkdown"
+          note="Markdown for lists, bold, and tables — monochrome throughout. The only coloured thing an answer can contain is a citation chip."
+        >
+          <div className="rounded-panel border border-edge p-4">
+            <AnswerMarkdown
+              text={SAMPLE_ANSWER}
+              renderMarker={(marker) => (
+                <CitationChipWithPreview
+                  marker={marker}
+                  ink={marker === 3 ? "rose" : "citrine"}
+                  documentTitle={
+                    marker === 3
+                      ? "Statement of Work 04"
+                      : "Master Services Agreement"
+                  }
+                  pageFrom={marker === 3 ? 2 : 14}
+                  pageTo={marker === 3 ? 2 : 14}
+                  quotedText="Either party may terminate this Agreement for convenience upon sixty (60) days prior written notice to the other party."
+                />
+              )}
+            />
+          </div>
+        </Section>
+
+        <Section
+          title="RetrievalTrace"
+          note="Collapsed by default. The rows that lost are the interesting ones, and an em dash means that channel never returned the passage at all."
+        >
+          <div className="rounded-panel border border-edge p-4">
+            <RetrievalTrace rows={SAMPLE_TRACE} />
+          </div>
+        </Section>
+
+        <Section
+          title="AnswerMeta"
+          note="The quiet footer. Zero is the real cost on the free pool rather than an estimate, so it reads 'free' instead of $0.00."
+        >
+          <div className="flex flex-col gap-3 rounded-panel border border-edge p-4">
+            <AnswerMeta
+              metadata={{
+                model: "meta-llama/llama-3.3-70b-instruct:free",
+                promptTokens: 2841,
+                completionTokens: 176,
+                costCents: 0,
+                latencyMs: 3120,
+                finishReason: "stop",
+                invalidMarkers: [],
+              }}
+            />
+            <AnswerMeta
+              metadata={{
+                model: null,
+                promptTokens: null,
+                completionTokens: null,
+                costCents: 0,
+                latencyMs: 412,
+                finishReason: "no-context",
+                invalidMarkers: [],
+              }}
+            />
+            <AnswerMeta
+              metadata={{
+                model: "qwen/qwen-2.5-72b-instruct:free",
+                promptTokens: 3102,
+                completionTokens: 204,
+                costCents: 0,
+                latencyMs: 5980,
+                finishReason: "stop",
+                invalidMarkers: [9],
+              }}
+            />
+          </div>
+        </Section>
+
+        <Section
           title="Composer"
-          note="Grows to eight lines, then scrolls. Cmd/Ctrl+Enter sends; a bare Enter is a newline."
+          note="Grows to eight lines, then scrolls. Cmd/Ctrl+Enter sends; a bare Enter is a newline. While an answer streams, send becomes stop and the box stays live."
         >
           <div className="grid gap-4 sm:grid-cols-2">
             <Composer onSubmit={() => {}} />
             <Composer
               onSubmit={() => {}}
               disabled
-              disabledReason="This document is not ready to search yet."
+              disabledReason="Select at least one document."
+            />
+            <Composer onSubmit={() => {}} streaming onStop={() => {}} />
+            <Composer
+              onSubmit={() => {}}
+              disabled
+              disabledReason="Contract.pdf is still embedding."
             />
           </div>
         </Section>

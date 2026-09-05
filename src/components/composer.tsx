@@ -1,7 +1,7 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ArrowUp } from "lucide-react";
+import { ArrowUp, Square } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -38,6 +38,14 @@ export interface ComposerProps {
    */
   disabled?: boolean;
   disabledReason?: string;
+  /**
+   * An answer is being retrieved or streamed. The send button becomes a stop
+   * button; the textarea stays LIVE so the next question can be typed while
+   * the current answer arrives.
+   */
+  streaming?: boolean;
+  /** Required whenever `streaming` is true. Aborts the request. */
+  onStop?: () => void;
   className?: string;
   autoFocus?: boolean;
 }
@@ -59,6 +67,8 @@ export function Composer({
   placeholder = "Ask a question about these documents",
   disabled = false,
   disabledReason,
+  streaming = false,
+  onStop,
   className,
   autoFocus = false,
 }: ComposerProps) {
@@ -76,7 +86,9 @@ export function Composer({
   }, [value]);
 
   const trimmed = value.trim();
-  const canSend = !disabled && trimmed.length > 0;
+  // Sending while an answer streams would race two questions into one thread.
+  // Stop first — which is why the same button does both.
+  const canSend = !disabled && !streaming && trimmed.length > 0;
 
   function send() {
     if (!canSend) return;
@@ -118,15 +130,27 @@ export function Composer({
           )}
         />
 
-        <Button
-          type="button"
-          size="icon-sm"
-          onClick={send}
-          disabled={!canSend}
-          aria-label="Send question"
-        >
-          <ArrowUp aria-hidden />
-        </Button>
+        {streaming ? (
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="outline"
+            onClick={onStop}
+            aria-label="Stop answering"
+          >
+            <Square aria-hidden className="fill-current" />
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            size="icon-sm"
+            onClick={send}
+            disabled={!canSend}
+            aria-label="Send question"
+          >
+            <ArrowUp aria-hidden />
+          </Button>
+        )}
       </div>
 
       {/* One line, always present: either the reason the box is off, or the
@@ -137,6 +161,8 @@ export function Composer({
       >
         {disabled && disabledReason ? (
           disabledReason
+        ) : streaming ? (
+          "Answering. Press stop to cancel."
         ) : sendKey ? (
           <>
             <span className="num">{sendKey}</span> to send

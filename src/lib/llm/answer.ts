@@ -164,6 +164,10 @@ export async function* answer(
     yield { type: "start", passages: [], model: "none" };
     yield { type: "text", delta: text };
     yield { type: "citations", citations: [] };
+    // Still sent, and still worth expanding: an empty final context with a
+    // full candidate list is exactly how "these documents don't answer that"
+    // is explained.
+    yield { type: "trace", candidates };
     yield {
       type: "done",
       message: {
@@ -283,6 +287,7 @@ export async function* answer(
   await persistTrace({ messageId, candidates, citations: validation.citations });
 
   yield { type: "citations", citations: validation.citations };
+  yield { type: "trace", candidates };
   yield {
     type: "done",
     message: {

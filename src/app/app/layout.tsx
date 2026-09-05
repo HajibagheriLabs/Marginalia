@@ -2,6 +2,7 @@ import { LibraryRail } from "@/components/workspace/library-rail";
 import { UploadProvider } from "@/components/upload/upload-provider";
 import { UploadQueue } from "@/components/upload/upload-queue";
 import { requireUser } from "@/lib/auth-server";
+import { listUserConversations } from "@/lib/conversations";
 import { listUserDocuments } from "@/lib/documents";
 import { readWorkspacePrefs } from "@/lib/workspace-prefs.server";
 
@@ -27,9 +28,10 @@ export default async function WorkspaceLayout({
   children: React.ReactNode;
 }) {
   const user = await requireUser();
-  const [{ railCollapsed }, documents] = await Promise.all([
+  const [{ railCollapsed }, documents, conversations] = await Promise.all([
     readWorkspacePrefs(),
     listUserDocuments(user.id),
+    listUserConversations(user.id),
   ]);
 
   return (
@@ -37,6 +39,7 @@ export default async function WorkspaceLayout({
       <div className="flex h-dvh min-h-0 flex-col overflow-hidden lg:flex-row">
         <LibraryRail
           documents={documents}
+          conversations={conversations}
           user={{ name: user.name ?? "", email: user.email }}
           initialCollapsed={railCollapsed}
         />

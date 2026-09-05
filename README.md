@@ -8,8 +8,9 @@ passage and highlights it.
 If the documents don't answer the question, the app says so and suggests what to search for instead.
 That is a correct answer, not a failure.
 
-> **Status: skeleton.** The design system, environment, and project structure are in place. The
-> database, auth, ingestion pipeline, and retrieval are not built yet.
+> **Status: end to end.** Auth, upload, the four-stage ingestion pipeline, hybrid retrieval, the
+> grounded answer engine, and the conversation pane are built and wired together. Clicking a citation
+> to scroll and highlight the passage in the document viewer is the next step.
 
 ## How it works
 
@@ -55,7 +56,7 @@ whether it made it into the final context. The retrieval is inspectable rather t
 | Vector store  | Qdrant Cloud — one collection, cosine distance                          |
 | Auth          | Better Auth, email + password                                          |
 | Model gateway | OpenRouter through the Vercel AI SDK, streaming                        |
-| Embeddings    | OpenAI `text-embedding-3-small`, behind an `EmbeddingProvider` interface |
+| Embeddings    | `Xenova/bge-small-en-v1.5` run locally in-process, behind an `EmbeddingProvider` interface |
 | File storage  | Vercel Blob, uploaded client-side with a short-lived token             |
 | PDF           | `unpdf` for server-side extraction, `react-pdf` for in-browser rendering |
 | Validation    | Zod at every boundary                                                  |
@@ -147,6 +148,7 @@ src/
   lib/
     brand.ts         APP_NAME — the product name lives here and nowhere else
     env.ts           zod-validated environment, parsed at boot
+    chat/            the conversation wire format, answer markdown, titles
     ingest/          extract → chunk → embed → index
     llm/             model gateway, prompts, citation parsing
     retrieval/       dense + lexical search, RRF fusion, reranking
