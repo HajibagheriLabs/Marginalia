@@ -4,24 +4,30 @@ import { EmptyState } from "@/components/empty-state";
 import { ErrorState } from "@/components/error-state";
 import { IngestProgress } from "@/components/ingest-progress";
 import { UploadDropzone } from "@/components/upload/upload-dropzone";
+import { DocumentViewer } from "@/components/viewer/document-viewer";
 import {
   DocumentActions,
   RetryIngestionButton,
 } from "@/components/workspace/document-actions";
-import { PlaceholderPageContent } from "@/components/workspace/placeholder-page";
-import { ReadingSurface } from "@/components/workspace/reading-surface";
 import type { Document } from "@/db/schema";
-import { PLACEHOLDER_PAGE } from "@/lib/placeholder";
+import { loadDocumentView } from "@/lib/document-view";
 import { formatBytes, formatPageCount } from "@/lib/upload";
 
 /**
- * The centre pane: a slim monochrome header, then the table with the sheet on
- * it. The header carries the title, the size or page count, and the one
- * destructive action — the reading pane is for reading.
+ * The centre pane: a slim monochrome header, then the viewer.
  *
- * The whole pane is a drop target, which is the behaviour people try first.
+ * The header carries the title, the size or page count, and the one
+ * destructive action; everything about reading the document itself belongs to
+ * the viewer below it. The whole pane is a drop target, which is the behaviour
+ * people try first.
+ *
+ * The view is assembled HERE, on the server, rather than fetched by the
+ * viewer: the page rows are a plain indexed read, and doing it during the
+ * render that the reader is already waiting for costs nothing and means the
+ * first paint is the document rather than a loading state that then becomes
+ * the document.
  */
-export function ReadingPane({
+export async function ReadingPane({
   document,
   indexedCount = 0,
 }: {
@@ -29,6 +35,9 @@ export function ReadingPane({
   /** Passages already embedded, so the first paint already shows a number. */
   indexedCount?: number;
 }) {
+  const ready = document.status === "ready";
+  const view = ready ? await loadDocumentView(document) : null;
+
   return (
     <UploadDropzone>
       <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-edge bg-room pr-1.5 pl-4">
@@ -45,10 +54,8 @@ export function ReadingPane({
         </div>
       </header>
 
-      {document.status === "ready" ? (
-        <ReadingSurface>
-          <PlaceholderPageContent page={PLACEHOLDER_PAGE} />
-        </ReadingSurface>
+      {view && view.pageCount > 0 ? (
+        <DocumentViewer view={view} />
       ) : (
         // Nothing is lifted here: a document that cannot be read has no sheet.
         // The room stays empty, which is the honest picture of the state.
@@ -58,6 +65,15 @@ export function ReadingPane({
               className="max-w-[480px]"
               title="This document could not be processed."
               detail={document.errorMessage ?? undefined}
+              action={<RetryIngestionButton documentId={document.id} />}
+            />
+          ) : ready ? (
+            // Ready, but no pages were written. Rare, and worth its own
+            // sentence: retrying ingestion is the fix, not waiting.
+            <ErrorState
+              className="max-w-[480px]"
+              title="No text was stored for this document."
+              detail="It finished processing without producing any pages. Re-running ingestion usually resolves it."
               action={<RetryIngestionButton documentId={document.id} />}
             />
           ) : (

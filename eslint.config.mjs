@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vendor build output: the PDF.js runtime, copied verbatim out of
+    // pdfjs-dist by scripts/copy-pdf-worker.mjs on every build. Linting a
+    // minified third-party bundle produces thousands of warnings about code
+    // this repository does not own and must not edit.
+    "public/pdfjs/**",
   ]),
 ]);
 

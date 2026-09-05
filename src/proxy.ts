@@ -74,6 +74,15 @@ export const config = {
     // status code; redirecting an unauthenticated POST to /sign-in would hand
     // the caller a 307 and a page of HTML instead of a 401 it can act on. Those
     // routes read the session themselves — see src/app/api/blob/upload/route.ts.
-    "/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff2?)$).*)",
+    //
+    // /pdfjs is excluded because it is the PDF.js runtime served out of
+    // public/: the worker script, the character maps, and the base fonts. The
+    // extension allow-list below does not cover .mjs, .bcmap, or .pfb, so
+    // without this the worker request is matched, redirected to /sign-in, and
+    // the browser starts a Web Worker whose body is a page of HTML. It fails
+    // as "the document will not open" with nothing in the console pointing at
+    // authentication — and only for a request without a session cookie, which
+    // is why a signed-in developer never sees it.
+    "/((?!api|pdfjs|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff2?)$).*)",
   ],
 };

@@ -1,6 +1,11 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+/* PDF.js's text layer geometry. Required, not cosmetic: it is what positions
+   the selectable text over the rasterised page, and without it the layer
+   collapses into a pile of overlapping spans in the top-left corner. It also
+   ships two colours, which are overridden below — see THE VENDOR PALETTE. */
+@import "react-pdf/dist/Page/TextLayer.css";
 
 /* Dark is the default room. `.light` is the opt-in override, so the workspace
    renders dark before hydration and with JavaScript disabled. */
@@ -70,6 +75,26 @@
   /* --- DEPTH: exactly two shadows, both physically justified -------------- */
   --shadow-sheet: 0 1px 2px oklch(0% 0 0 / 0.3), 0 10px 28px -8px oklch(0% 0 0 / 0.45);
   --shadow-overlay: 0 2px 8px oklch(0% 0 0 / 0.32), 0 12px 36px -10px oklch(0% 0 0 / 0.5);
+
+  /* --- THE VENDOR PALETTE, DISARMED ---------------------------------------
+     PDF.js's TextLayer.css declares its own find-highlight colours on :root:
+
+        --highlight-bg-color: rgba(180, 0, 170, 1)     magenta
+        --highlight-selected-bg-color: rgba(0, 100, 0, 1)  dark green
+
+     That is a third-party stylesheet introducing two saturated colours into an
+     application whose organizing law is that colour means citation. This
+     viewer never uses PDF.js's own find controller — search is ours, over the
+     text in Postgres — but the variables are global and would apply the moment
+     anything did. They are redefined here, after the import, so the vendor
+     palette cannot reach the page even by accident.
+
+     Both become the same neutral wash a search match gets, because that is
+     what they would be marking. Non-ink, deliberately: a search result is
+     where you looked, not evidence.
+     ---------------------------------------------------------------------- */
+  --highlight-bg-color: color-mix(in oklch, var(--text-faint) 26%, transparent);
+  --highlight-selected-bg-color: color-mix(in oklch, var(--text-faint) 55%, transparent);
 }
 
 /* =========================================================================
@@ -278,6 +303,38 @@
     padding-block: 1px;
   }
 
+  /* A SEARCH MATCH — and the reason it is grey.
+     ------------------------------------------------------------------------
+     Search results are not evidence. A reader scanning for the word "notice"
+     is looking, not being shown a source, and giving that the same visual
+     weight as a citation would break the one thing the colour system says:
+     IF IT IS COLOURED, IT IS A CITATION. So a match gets a neutral wash of
+     --text-faint and nothing else — no ink, and no underline, which is the
+     other half of what makes a citation look like a citation.
+
+     --text-faint is a ROOM token and this lands on paper, which is the single
+     exception to the paper invariant in the application. It is deliberate and
+     it is the right kind of exception: a search highlight is chrome, a tool
+     state that belongs to the viewer rather than to the document, and it
+     should read as something laid over the page rather than printed on it.
+     The two theme values are near-identical greys, so at 26% over warm white
+     the sheet still looks the same in both rooms. */
+  .search-mark {
+    background-color: color-mix(in oklch, var(--text-faint) 26%, transparent);
+    /* <mark> defaults to black-on-yellow. Inside the PDF text layer the parent
+       span is transparent and the mark must stay transparent with it; on a
+       text page it must stay --paper-text. `inherit` is both. */
+    color: inherit;
+    border-radius: 2px;
+    padding-block: 1px;
+  }
+
+  /* The one the reader is standing on. Same hue, more of it — stepping through
+     matches should feel like moving a cursor, not like changing modes. */
+  .search-mark[data-current="true"] {
+    background-color: color-mix(in oklch, var(--text-faint) 55%, transparent);
+  }
+
   /* A citation chip in the conversation: 12% tint, 1px ink border. */
   .ink-chip {
     background-color: color-mix(in oklch, var(--ink) 12%, transparent);
@@ -381,4 +438,38 @@
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* =========================================================================
+   THE PDF PAGE
+   PDF.js draws into a canvas and lays a transparent text layer over it. The
+   canvas is the page image; the text layer is what selection, search, and —
+   next — citation highlighting attach to. Both are kept exactly page-sized so
+   the two never drift apart by a pixel.
+   ========================================================================= */
+.react-pdf__Page {
+  position: relative;
+  /* The sheet is the paper. A page that painted its own white would show a
+     seam against --paper wherever the PDF's own margins are transparent. */
+  background: transparent;
+}
+
+.react-pdf__Page__canvas {
+  display: block;
+  /* DELIBERATELY NOT max-width: 100%. The text layer is positioned in the
+     canvas's own coordinate space by PDF.js, so shrinking the canvas with CSS
+     slides every selectable span out from under the words it belongs to —
+     selection, search highlights, and citation highlights all land in the
+     wrong place, and nothing about it looks broken until you try to select a
+     line. A page wider than the pane scrolls horizontally instead. */
+}
+
+/* The text layer sits above the canvas and must not intercept scroll. Its own
+   spans re-enable pointer events for selection. */
+.react-pdf__Page__textContent {
+  pointer-events: none;
+}
+
+.react-pdf__Page__textContent :is(span, mark) {
+  pointer-events: auto;
 }

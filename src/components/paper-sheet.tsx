@@ -28,7 +28,17 @@ export function PaperSheet({
    */
   rail,
   className,
-  contentClassName,
+  /**
+   * REPLACES the default margins rather than adding to them.
+   *
+   * A PDF page carries its own margins, so the viewer sets this to zero and
+   * lets the page go edge to edge; padding the sheet as well would frame the
+   * page inside the page. Merging instead of replacing would leave the
+   * responsive half of the default (`sm:px-12`) in place and reintroduce the
+   * frame at every width above the small breakpoint — a bug that only appears
+   * on wide screens.
+   */
+  contentClassName = "px-6 py-10 sm:px-12 sm:py-14",
   ...props
 }: React.ComponentProps<"article"> & {
   rail?: React.ReactNode;
@@ -48,9 +58,7 @@ export function PaperSheet({
         at 17px — the middle of the readable range. The measure is set by the
         margins, the way it is on a real page.
       */}
-      <div className={cn("px-6 py-10 sm:px-12 sm:py-14", contentClassName)}>
-        {children}
-      </div>
+      <div className={cn(contentClassName)}>{children}</div>
 
       {rail ? (
         <div className="pointer-events-none absolute inset-y-4 right-4 w-3">

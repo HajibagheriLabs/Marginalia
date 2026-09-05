@@ -9,8 +9,8 @@ If the documents don't answer the question, the app says so and suggests what to
 That is a correct answer, not a failure.
 
 > **Status: end to end.** Auth, upload, the four-stage ingestion pipeline, hybrid retrieval, the
-> grounded answer engine, and the conversation pane are built and wired together. Clicking a citation
-> to scroll and highlight the passage in the document viewer is the next step.
+> grounded answer engine, the conversation pane, and the document viewer are built and wired
+> together. Clicking a citation to scroll and highlight the passage on the page is the next step.
 
 ## How it works
 
@@ -45,6 +45,13 @@ record of the conversation.
 **The retrieval trace.** Under every answer, a collapsed row expands into a table: each passage, its
 page, its dense rank and score, its lexical rank and score, the fused RRF score, the rerank score, and
 whether it made it into the final context. The retrieval is inspectable rather than asserted.
+
+**One viewer, two renderers.** PDFs are rasterised by PDF.js with the text layer kept on; DOCX, TXT,
+and Markdown are rendered as text on the same paper sheet. Both produce pages carrying the same
+`char_start`/`char_end` into the document's extracted text, so scrolling to a cited passage works the
+same way whatever the format. Pages are virtualised — a 300-page contract mounts about six of them —
+and in-document search runs over the extracted text in Postgres, because a search that could only see
+the rendered pages would confidently report the wrong number.
 
 ## Stack
 
@@ -153,6 +160,8 @@ src/
     llm/             model gateway, prompts, citation parsing
     retrieval/       dense + lexical search, RRF fusion, reranking
     vector/          Qdrant client and the single filtered search() helper
+    viewer/          page model, in-document search, citation anchors
+scripts/             build steps (copying the PDF.js runtime into public/)
   server/            server actions and route handlers
 evals/               retrieval and grounding eval set
 ```

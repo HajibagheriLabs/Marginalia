@@ -12,6 +12,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AnswerMarkdown } from "@/components/conversation/answer-markdown";
 import { AnswerMeta } from "@/components/conversation/answer-meta";
 import { RetrievalTrace } from "@/components/conversation/retrieval-trace";
+import { TextPage } from "@/components/viewer/text-pages";
 import { DocumentListItem } from "@/components/document-list-item";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorState } from "@/components/error-state";
@@ -26,11 +27,10 @@ import {
 import { StatusDot } from "@/components/status-dot";
 import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { PlaceholderPageContent } from "@/components/workspace/placeholder-page";
 import type { UITraceRow } from "@/lib/chat/types";
+import { searchPages } from "@/lib/viewer/search";
 import { ALL_DOCUMENT_STATUSES } from "@/lib/document-status";
 import { INKS, inkVar } from "@/lib/ink";
-import { PLACEHOLDER_PAGE } from "@/lib/placeholder";
 
 /**
  * SCAFFOLDING — a working inventory of the component layer.
@@ -141,6 +141,31 @@ const SAMPLE_TRACE: UITraceRow[] = [
     used: false,
   },
 ];
+
+/** One synthetic page of a Word document, as the extractor would have stored it. */
+const SAMPLE_PAGE_TEXT = `7.1 Termination for convenience
+
+Either party may terminate this Agreement for convenience upon sixty (60) days prior written notice to the other party. Termination for convenience does not relieve either party of obligations accrued before the effective date of termination, including any amounts then due and payable.
+
+Where the Customer terminates for convenience during an initial period, the Customer shall pay, within thirty (30) days of the effective date, all fees that would have fallen due for the remainder of that period. The parties agree that this sum is a genuine pre-estimate of loss and not a penalty.
+
+7.2 Termination for cause
+
+Either party may terminate this Agreement immediately by written notice if the other party commits a material breach that is incapable of remedy, or commits a material breach that is capable of remedy and fails to remedy it within thirty (30) days of receiving written notice specifying the breach.`;
+
+const SAMPLE_TEXT_PAGE = {
+  pageNumber: 14,
+  charStart: 41_200,
+  charEnd: 41_200 + SAMPLE_PAGE_TEXT.length,
+  text: SAMPLE_PAGE_TEXT,
+  estimatedHeight: 420,
+};
+
+/** Run through the real search, so the gallery shows what the viewer shows. */
+const SAMPLE_MATCHES = searchPages(
+  [{ pageNumber: 14, text: SAMPLE_PAGE_TEXT }],
+  "written notice",
+).matches.map((match, index) => ({ match, index }));
 
 export function ComponentGallery() {
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -483,14 +508,26 @@ export function ComponentGallery() {
         </Section>
 
         <Section
-          title="Reading experience"
-          note="A full page at the real measure: 17px Source Serif 4, 1.65 leading, margins setting a ~65 character column. Nothing extracts document text yet, so this is a stand-in."
+          title="Reading a non-PDF document"
+          note="The real renderer for DOCX, TXT, and Markdown: 17px Source Serif 4, 1.65 leading, margins setting a ~65 character column. Every paragraph carries its offset into the document text, which is what makes citation targeting exact for these formats."
         >
           {/* The sheet at its real 720px width, so the column really is the
               measure the design specifies rather than the gallery's. */}
           <PaperSheet>
-            <PlaceholderPageContent page={PLACEHOLDER_PAGE} />
+            <TextPage
+              page={SAMPLE_TEXT_PAGE}
+              index={0}
+              matches={SAMPLE_MATCHES}
+              currentMatchIndex={0}
+              onMeasure={() => {}}
+            />
           </PaperSheet>
+          <p className="text-body-sm text-text-muted">
+            The grey washes are search matches, the darker one being the
+            current. Compare them with the citation highlight above: search
+            results are where you looked, evidence is what the answer rests on,
+            and only one of the two is allowed a colour.
+          </p>
         </Section>
       </div>
     </TooltipProvider>
