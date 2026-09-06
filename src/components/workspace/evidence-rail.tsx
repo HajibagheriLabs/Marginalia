@@ -5,6 +5,7 @@ import type { CSSProperties } from "react";
 import {
   Tooltip,
   TooltipContent,
+  TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { inkVar, type InkName } from "@/lib/ink";
@@ -87,8 +88,23 @@ export function EvidenceRail({
   // no empty gesture at the edge of the page.
   if (marks.length === 0 && otherDocumentCount === 0) return null;
 
+  /*
+   * ITS OWN TooltipProvider.
+   *
+   * The rail lives inside the reading pane, and the only provider in the
+   * workspace is the one the CONVERSATION pane mounts — a different subtree
+   * entirely. Without this, every mark's tooltip throws "`Tooltip` must be used
+   * within `TooltipProvider`" and takes the whole page down with it.
+   *
+   * That went unnoticed for as long as it did because the rail renders nothing
+   * at all until a conversation has citations in it, and until the demo seed
+   * existed no environment started with any. Mounting the provider here rather
+   * than higher up keeps it next to the only thing that needs it, and means the
+   * rail cannot be dropped into another tree and break again.
+   */
   return (
-    <div className={cn("flex h-full flex-col items-center gap-1.5", className)}>
+    <TooltipProvider delayDuration={200}>
+      <div className={cn("flex h-full flex-col items-center gap-1.5", className)}>
       <div className="relative w-3 flex-1 rounded-chip bg-paper-edge/50">
         {/* Where you are in the document. A neutral paper tone, never an ink —
             the inks in this strip must only ever mean "a citation is here". */}
@@ -192,9 +208,10 @@ export function EvidenceRail({
             {otherDocumentCount === 1 ? "passage" : "passages"} in the other
             documents this conversation searches. Open one to see its marks.
           </TooltipContent>
-        </Tooltip>
-      ) : null}
-    </div>
+          </Tooltip>
+        ) : null}
+      </div>
+    </TooltipProvider>
   );
 }
 
