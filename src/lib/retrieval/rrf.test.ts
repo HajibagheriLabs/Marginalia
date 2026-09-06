@@ -142,3 +142,78 @@ describe("RRF", () => {
     expect(fused[0].score).toBeCloseTo(1 / 11, 12);
   });
 });
+
+/* ========================================================================== *
+ * CHANNEL WEIGHTS
+ * ========================================================================== */
+
+describe("channel weights", () => {
+  it("defaults to 1, which is plain RRF", () => {
+    // The property that makes weights safe to add: an unweighted call and an
+    // explicitly-1 call must be bit-for-bit identical, or every existing score
+    // in the product would shift the day this parameter appeared.
+    const implicit = fuse([{ ids: ["A", "B"] }, { ids: ["B", "A"] }]);
+    const explicit = fuse([
+      { ids: ["A", "B"], weight: 1 },
+      { ids: ["B", "A"], weight: 1 },
+    ]);
+
+    expect(implicit).toEqual(explicit);
+  });
+
+  it("multiplies a channel's contribution", () => {
+    const fused = fuse([
+      { ids: ["A"], weight: 2 },
+      { ids: ["B"], weight: 1 },
+    ]);
+
+    expect(fused[0].id).toBe("A");
+    expect(fused[0].score).toBeCloseTo(2 / (RRF_K + 1), 12);
+    expect(fused[1].score).toBeCloseTo(1 / (RRF_K + 1), 12);
+  });
+
+  it("lets a weight overturn the corroboration bias", () => {
+    // Plain RRF deliberately ranks a passage found by BOTH channels above one
+    // found 1st by a single channel. A weight is the only knob that can express
+    // "trust dense more than that" — K is shared by every list and changes the
+    // curve's shape, not the balance between lists.
+    //
+    // The arithmetic is written out rather than trusted, because it is the
+    // whole point of the test and it is not obvious how heavy a weight has to
+    // be. With `corroborated` at rank 10 in both channels and `x` at rank 1 in
+    // dense only:
+    //
+    //   equal weights   corroborated = 2/70 = 0.0286  beats  x = 1/61 = 0.0164
+    //   dense weight 8  corroborated = 9/70 = 0.1286  loses to x = 8/61 = 0.1311
+    //
+    // Corroboration is expensive to overturn, and that is the intended bias.
+    const dense = ["x", "a", "b", "c", "d", "e", "f", "g", "h", "corroborated"];
+    const lexical = ["p", "q", "r", "s", "t", "u", "v", "w", "y", "corroborated"];
+
+    const equal = fuse([{ ids: dense }, { ids: lexical }]);
+    expect(equal[0].id).toBe("corroborated");
+
+    const denseHeavy = fuse([
+      { ids: dense, weight: 8 },
+      { ids: lexical, weight: 1 },
+    ]);
+    expect(denseHeavy[0].id).toBe("x");
+    expect(denseHeavy[0].score).toBeCloseTo(8 / (RRF_K + 1), 12);
+  });
+
+  it("removes a channel at weight 0 while keeping its ranks in the trace", () => {
+    // How "what would dense-only do?" is measured without a second code path.
+    // The lexical rank must survive: the trace is a product feature, and a
+    // passage the lexical channel found at rank 1 is a fact about the search
+    // whether or not it was allowed to contribute a score.
+    const fused = fuse([
+      { ids: ["A"], weight: 1 },
+      { ids: ["B"], weight: 0 },
+    ]);
+
+    const b = fused.find((entry) => entry.id === "B")!;
+    expect(b.score).toBe(0);
+    expect(b.ranks).toEqual([null, 1]);
+    expect(fused[0].id).toBe("A");
+  });
+});

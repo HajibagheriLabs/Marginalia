@@ -23,10 +23,11 @@
  * ───────────────────────────────────────────────────────────────────────────
  * THE FORMULA
  *
- *     score(d) = Σ  1 / (K + rank_i(d))
+ *     score(d) = Σ  w_i / (K + rank_i(d))
  *                i
  *
- * over the channels that returned `d`, with ranks 1-based. A passage found at
+ * over the channels that returned `d`, with ranks 1-based and weights
+ * defaulting to 1 (plain RRF). A passage found at
  * position 1 by both channels scores 2/(K+1); one found only by dense at
  * position 1 scores 1/(K+1). Agreement is rewarded without either channel
  * being able to veto the other.
@@ -62,6 +63,28 @@ export const RRF_K = 60;
 export interface RankedList {
   /** Chunk ids in rank order. Position 0 is rank 1. */
   ids: string[];
+  /**
+   * How much this channel's opinion counts. Defaults to 1 — equal footing,
+   * which is plain RRF and the production setting.
+   *
+   * A weight multiplies this channel's contribution: `w / (k + rank)`. It is
+   * the honest way to express "trust dense more than lexical on this corpus",
+   * and it is the only tuning knob here that can express it at all — K is
+   * shared by every list and changes the shape of the curve rather than the
+   * balance between the lists.
+   *
+   * Deliberately NOT normalised to sum to 1. Doubling both weights doubles
+   * every score and changes no ordering, so normalising would only hide that
+   * fact; what matters is the RATIO, and leaving the numbers as written makes
+   * the ratio the thing you actually type. Note that the relative floor in
+   * `ASSEMBLY.minRrfRatio` is likewise scale-free, so it needs no adjustment
+   * when weights change.
+   *
+   * A weight of 0 removes the channel from fusion while still recording its
+   * ranks in the trace — which is how "what would dense-only do?" is measured
+   * without a second code path that could differ in some other way.
+   */
+  weight?: number;
 }
 
 export interface FusedEntry {
@@ -86,6 +109,8 @@ export interface FusedEntry {
  * eval harness noisy.
  */
 export function fuse(lists: RankedList[], k: number = RRF_K): FusedEntry[] {
+  const weights = lists.map((list) => list.weight ?? 1);
+
   // id -> its 1-based rank in each list, null where absent.
   const ranks = new Map<string, Array<number | null>>();
 
@@ -105,7 +130,9 @@ export function fuse(lists: RankedList[], k: number = RRF_K): FusedEntry[] {
   const fused: FusedEntry[] = [];
   for (const [id, entry] of ranks) {
     let score = 0;
-    for (const rank of entry) if (rank !== null) score += 1 / (k + rank);
+    entry.forEach((rank, listIndex) => {
+      if (rank !== null) score += weights[listIndex] / (k + rank);
+    });
     fused.push({ id, score, ranks: entry });
   }
 

@@ -1,5 +1,6 @@
 import type { EmbeddingProvider } from "@/lib/embeddings";
 import type { VectorStore } from "@/lib/vector";
+import type { ChunkOptions } from "./chunk";
 
 /**
  * THE STAGE CONTRACT.
@@ -83,6 +84,18 @@ export class StageError extends Error {
 export interface StageDeps {
   embeddings?: EmbeddingProvider;
   vectors?: VectorStore;
+  /**
+   * Overrides for the chunking budget. Production passes nothing and gets
+   * `CHUNKING`.
+   *
+   * The seam exists because chunk size, overlap, and the section-break ratio
+   * are the ingestion-side knobs the eval harness sweeps, and sweeping them
+   * has to re-run THIS stage rather than a copy of it — a second chunk-and-
+   * insert path written for the eval would be measuring code that does not
+   * ship. Several of the comments on `CHUNKING` end in "worth measuring once
+   * the eval harness exists"; this is what makes that possible.
+   */
+  chunkOptions?: ChunkOptions;
   /**
    * `Date.now()` after which the stage should stop taking NEW work and return
    * `{ complete: false }`. It is a deadline for starting a batch, not for

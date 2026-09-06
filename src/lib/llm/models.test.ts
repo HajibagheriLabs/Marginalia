@@ -41,7 +41,7 @@ describe("`:free` enforcement at boot", () => {
   });
 
   it("refuses to load with a paid primary model", async () => {
-    vi.stubEnv("OPENROUTER_MODEL", "anthropic/claude-sonnet-5");
+    vi.stubEnv("OPENROUTER_MODEL", "some-vendor/expensive-model");
 
     // env.ts parses at module load, so importing it IS the boot check.
     await expect(import("@/lib/env")).rejects.toThrow(/:free/);

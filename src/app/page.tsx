@@ -57,7 +57,7 @@ export default function Home() {
               ["Chunks retrieved", "8"],
               ["Fused RRF score", "0.0164"],
               ["Latency", "1,284 ms"],
-              ["Model", "claude-sonnet-5"],
+              ["Model", "z-ai/glm-5.2:free"],
             ].map(([term, value]) => (
               <div key={term} className="flex items-baseline justify-between gap-4">
                 <dt className="text-body-sm text-text-faint">{term}</dt>

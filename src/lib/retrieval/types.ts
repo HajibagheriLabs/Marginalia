@@ -113,8 +113,46 @@ export interface RetrieveParams {
   query: string;
   /** How many passages to assemble. Default `RETRIEVAL.k`. */
   k?: number;
+  /** Per-call overrides for the ranking constants. See `RetrievalTuning`. */
+  tuning?: RetrievalTuning;
   /** Test seam. Production passes nothing. */
   deps?: RetrievalDeps;
+}
+
+/**
+ * THE SWEEPABLE KNOBS.
+ *
+ * Every constant in this module has a documented default and a reason for it,
+ * and several of those reasons end in "that is worth measuring once the eval
+ * harness exists". This is the seam that makes measuring possible: the eval
+ * runner passes a different set of numbers per run and diffs the results,
+ * without a second copy of `retrieve()` that could drift from the one the
+ * product uses.
+ *
+ * PRODUCTION PASSES NOTHING. Every field is optional and every default comes
+ * from the same `RETRIEVAL` / `RRF_K` / `ASSEMBLY` constants as before, so a
+ * call site that ignores this object behaves exactly as it did. That is the
+ * property that makes an eval number mean something: the thing being measured
+ * is the thing that ships, with different arguments — not a parallel
+ * implementation that happens to look similar.
+ */
+export interface RetrievalTuning {
+  /** Candidates taken from EACH channel before fusion. Default 50. */
+  channelDepth?: number;
+  /** The RRF flattening constant. Default 60. Lower is more winner-take-all. */
+  rrfK?: number;
+  /** Weight on the dense channel in fusion. Default 1. Zero disables it. */
+  denseWeight?: number;
+  /** Weight on the lexical channel in fusion. Default 1. Zero disables it. */
+  lexicalWeight?: number;
+  /** Relative RRF floor, as a fraction of the top score. Default 0.3. */
+  minRrfRatio?: number;
+  /** Absolute cross-encoder floor when reranking ran. Default 0. */
+  minRerankScore?: number;
+  /** Hard cap on assembled passage tokens. Default 4,000. */
+  maxContextTokens?: number;
+  /** How many fused candidates the cross-encoder scores. Default `RERANK.candidates`. */
+  rerankCandidates?: number;
 }
 
 export interface RetrievalResult {

@@ -48,3 +48,10 @@ yarn-error.log*
 # pdfjs-dist. Committing it would be a second copy of a dependency that can
 # then disagree with the first.
 /public/pdfjs/
+
+# eval harness
+# Result JSON files ARE committed — they are the record a `--compare` diffs
+# against. The ingest cache is not: it holds database row ids for one machine's
+# eval tenant, and a committed copy would point every other clone at rows that
+# do not exist there.
+/evals/results/.ingest-cache.json

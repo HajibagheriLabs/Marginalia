@@ -14,12 +14,12 @@
  * │ It would therefore be entirely possible to write `costCents: 0` at each  │
  * │ call site and delete this file. That is exactly the shortcut that makes  │
  * │ an application impossible to move onto a paid model later: the day the   │
- * │ pool becomes `anthropic/claude-...`, cost stops being a constant and     │
- * │ every one of those call sites is a place where a wrong number can be     │
- * │ written silently. With the table, that day is a data change — add the    │
- * │ slug, add its two rates — and nothing else moves. The plumbing that      │
- * │ carries a price from here into `usage_events` and onto the message row   │
- * │ is already built, already tested, and already displayed.                 │
+ * │ pool carries a metered slug, cost stops being a constant and every one   │
+ * │ of those call sites is a place where a wrong number can be written       │
+ * │ silently. With the table, that day is a data change — add the slug, add  │
+ * │ its two rates — and nothing else moves. The plumbing that carries a      │
+ * │ price from here into `usage_events` and onto the message row is already  │
+ * │ built, already tested, and already displayed.                            │
  * │                                                                          │
  * │ WHERE TO CHECK PRICES:                                                   │
  * │   Free pool  https://openrouter.ai/models?max_price=0                    │

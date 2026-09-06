@@ -1,0 +1,51 @@
+{
+  "note": [
+    "THE EVAL CORPUS. Three real documents, all in the public domain, all",
+    "fetched from stable government endpoints and converted to plain text by",
+    "evals/src/dataset.ts.",
+    "",
+    "The converted .txt files are COMMITTED to the repository, so `npm run eval`",
+    "works offline and against exactly the bytes the checked-in question set was",
+    "written for. `npm run eval:fetch` re-fetches from source and verifies each",
+    "file against the sha256 below; run it to prove the corpus has not drifted,",
+    "or with --update after deliberately changing a source.",
+    "",
+    "WHY THESE THREE: they are the three shapes this product exists for — a long",
+    "regulation dense with cross-references, a clinical guideline written as",
+    "numbered recommendations, and a contract template of short numbered",
+    "clauses. Each stresses retrieval differently, and the differences show up",
+    "in the per-document breakdown of the report."
+  ],
+  "documents": [
+    {
+      "id": "hipaa-45-cfr-164",
+      "title": "45 CFR Part 164 — Security and Privacy (HIPAA)",
+      "kind": "government regulation",
+      "url": "https://www.ecfr.gov/api/versioner/v1/full/2024-10-01/title-45.xml?part=164",
+      "format": "ecfr-xml",
+      "filename": "hipaa-45-cfr-164.txt",
+      "license": "Public domain — edition of the Code of Federal Regulations, a work of the United States Government (17 U.S.C. 105).",
+      "sha256": "717dd218866cb8d13f733e8170a1f74d86fb7626256c29d63817ead93b24af1e"
+    },
+    {
+      "id": "cdc-opioid-guideline-2022",
+      "title": "CDC Clinical Practice Guideline for Prescribing Opioids for Pain — United States, 2022",
+      "kind": "clinical guideline",
+      "url": "https://www.cdc.gov/mmwr/volumes/71/rr/rr7103a1.htm",
+      "format": "cdc-mmwr-html",
+      "filename": "cdc-opioid-guideline-2022.txt",
+      "license": "Public domain — MMWR states that all material in the series is in the public domain and may be reproduced without permission.",
+      "sha256": "d121112f82ec5f95871a934af41c8502bbf7f2a47aef41e19fac9b11dc00d26c"
+    },
+    {
+      "id": "far-52-212-4",
+      "title": "FAR 52.212-4 — Contract Terms and Conditions, Commercial Products and Commercial Services",
+      "kind": "contract template",
+      "url": "https://www.ecfr.gov/api/versioner/v1/full/2024-10-01/title-48.xml?part=52&section=52.212-4",
+      "format": "ecfr-xml",
+      "filename": "far-52-212-4.txt",
+      "license": "Public domain — edition of the Code of Federal Regulations, a work of the United States Government (17 U.S.C. 105).",
+      "sha256": "74b57fe88d0bf9a32880de613a92858c55ddb047d7c9e1fffb5caccb7edfd466"
+    }
+  ]
+}

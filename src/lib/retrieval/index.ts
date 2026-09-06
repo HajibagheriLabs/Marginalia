@@ -27,6 +27,7 @@ export type {
   RetrievalDeps,
   RetrievalResult,
   RetrievalStats,
+  RetrievalTuning,
   RetrievedPassage,
   RetrieveParams,
 } from "./types";
@@ -93,6 +94,15 @@ export async function retrieve(
   const { userId, documentIds, query, k = RETRIEVAL.k, deps } = params;
   const startedAt = Date.now();
 
+  // Every ranking constant, resolved once. Production passes no `tuning` and
+  // gets exactly the documented defaults; the eval runner passes a sweep.
+  const tuning = params.tuning ?? {};
+  const channelDepth = tuning.channelDepth ?? RETRIEVAL.channelDepth;
+  const rrfK = tuning.rrfK ?? RRF_K;
+  const denseWeight = tuning.denseWeight ?? 1;
+  const lexicalWeight = tuning.lexicalWeight ?? 1;
+  const rerankCandidates = tuning.rerankCandidates ?? RERANK.candidates;
+
   if (documentIds.length === 0) {
     throw new RetrievalError("No documents were selected for this search.");
   }
@@ -130,7 +140,7 @@ export async function retrieve(
       userId,
       documentIds,
       vector: queryVector,
-      limit: RETRIEVAL.channelDepth,
+      limit: channelDepth,
     })
     .then((hits) => ({ hits, ms: Date.now() - denseStartedAt }));
 
@@ -139,7 +149,7 @@ export async function retrieve(
     userId,
     documentIds,
     query,
-    limit: RETRIEVAL.channelDepth,
+    limit: channelDepth,
   }).then((result) => ({ result, ms: Date.now() - lexicalStartedAt }));
 
   const [dense, lexical] = await Promise.all([densePromise, lexicalPromise]);
@@ -147,7 +157,13 @@ export async function retrieve(
   // ── 4. FUSE ─────────────────────────────────────────────────────────────
   const denseIds = dense.hits.map((hit) => hit.chunkId);
   const lexicalIds = lexical.result.hits.map((hit) => hit.chunkId);
-  const fused = fuse([{ ids: denseIds }, { ids: lexicalIds }], RRF_K);
+  const fused = fuse(
+    [
+      { ids: denseIds, weight: denseWeight },
+      { ids: lexicalIds, weight: lexicalWeight },
+    ],
+    rrfK,
+  );
 
   if (fused.length === 0) {
     return emptyResult(query, {
@@ -207,7 +223,7 @@ export async function retrieve(
 
   if (reranker && candidates.length > 0) {
     const rerankStartedAt = Date.now();
-    const window = candidates.slice(0, RERANK.candidates);
+    const window = candidates.slice(0, rerankCandidates);
 
     try {
       const scores = await reranker.score(
@@ -247,6 +263,9 @@ export async function retrieve(
   const { passages, contextTokens } = assemble(candidates, {
     k,
     reranked: rerankedCount > 0,
+    minRrfRatio: tuning.minRrfRatio,
+    minRerankScore: tuning.minRerankScore,
+    maxContextTokens: tuning.maxContextTokens,
   });
 
   // ── 7. RETURN, with the trace ───────────────────────────────────────────

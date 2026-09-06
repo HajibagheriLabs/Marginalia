@@ -123,7 +123,12 @@ export async function runChunking(
     charEnd: page.charEnd,
   }));
 
-  const produced = chunkDocument({ text, pages: spans });
+  const produced = chunkDocument({
+    text,
+    pages: spans,
+    // Undefined in production, which is what makes `CHUNKING` the default.
+    options: deps?.chunkOptions,
+  });
 
   if (produced.length === 0) {
     throw new StageError(

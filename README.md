@@ -54,6 +54,15 @@ same way whatever the format. Pages are virtualised — a 300-page contract moun
 and in-document search runs over the extracted text in Postgres, because a search that could only see
 the rendered pages would confidently report the wrong number.
 
+**The eval harness.** `npm run eval` puts three real public-domain documents — a HIPAA regulation, a
+CDC clinical guideline, and a standard federal contract clause — through the shipping pipeline and
+scores 44 hand-written questions on recall@5/@10, MRR, citation validity, citation support, refusal
+accuracy, and latency. Six of the questions are deliberately unanswerable, because a system that
+always returns its best eight passages will always produce something plausible and refusal is the
+only metric that catches it. Every ranking constant is settable per run and `--compare` diffs two
+result files, so a retrieval change is a delta rather than a feeling. See
+[evals/README.md](evals/README.md), which is honest about what 44 questions can and cannot tell you.
+
 ## Limits and cost
 
 Everything runs on free tiers, so the app is bounded in both directions: what one account can consume,
@@ -143,6 +152,13 @@ npm run db:migrate
 | `npm run typecheck` | `tsc --noEmit`                              |
 | `npm test`          | Vitest                                      |
 | `npm run test:e2e`  | Playwright                                  |
+| `npm run eval`      | Score the retrieval pipeline (see [evals/README.md](evals/README.md)) |
+| `npm run eval:pages`| Re-derive `expected_pages` from the question set's phrases |
+| `npm run eval:fetch`| Re-download the eval corpus and check it against its pins |
+
+`npm run eval` needs `DATABASE_URL`, the Qdrant credentials, and — unless run with
+`--retrieval-only` — `OPENROUTER_API_KEY`. It ingests into its own user row and its own
+Qdrant collection, so it never touches real data.
 
 Some tests need real services. They skip themselves when the credentials are
 absent, so `npm test` works on a fresh clone:
@@ -187,6 +203,7 @@ src/
   lib/
     brand.ts         APP_NAME — the product name lives here and nowhere else
     env.ts           zod-validated environment, parsed at boot
+    env.file.ts      .env loader for processes Next.js does not start
     limits.ts        every per-user ceiling, and the sentences that explain them
     rate-limit.ts    token buckets and the shared free-tier model counters
     chat/            the conversation wire format, answer markdown, titles
@@ -198,7 +215,11 @@ src/
     viewer/          page model, in-document search, citation anchors
 scripts/             build steps (copying the PDF.js runtime into public/)
   server/            server actions and route handlers
-evals/               retrieval and grounding eval set
+evals/
+  dataset/           three public-domain documents, committed as text
+  questions.jsonl    44 questions; expected_pages derived, not typed
+  results/           one JSON per run, tagged with a config hash
+  src/               the harness: ingest, run, score, report, compare
 ```
 
 ## Design — "Light Table"

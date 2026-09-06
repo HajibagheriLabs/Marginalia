@@ -20,7 +20,7 @@ import type { RetrievalCandidate, RetrievedPassage } from "./types";
 
 export const ASSEMBLY = {
   /**
-   * How many passages reach the model. CLAUDE.md's pipeline says 6–8.
+   * How many passages reach the model. The pipeline targets 6–8.
    *
    * The ceiling is not context size — 8 passages is ~2,500 tokens and any
    * modern model has room for far more. It is attention. Past roughly this
