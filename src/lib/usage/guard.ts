@@ -2,6 +2,7 @@ import { and, eq, gte, isNull, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import { conversations, documentPages, documents, messages } from "@/db/schema";
+import { dailyMessageLimitFor } from "@/lib/demo";
 import {
   LIMITS,
   documentLimitNotice,
@@ -223,6 +224,14 @@ export async function insertUserMessageWithinLimit(input: {
   content: string;
 }): Promise<string> {
   const since = startOfUtcDay();
+  /*
+   * The demo account gets a LOWER cap than a real one, and the difference is
+   * resolved here rather than at the call site so it cannot be applied in the
+   * chat route and forgotten in the settings readout. It is not a product
+   * limit — every demo visitor draws on the same shared free-model quota, so
+   * this is what stops one visitor at 9am leaving nothing for anyone else.
+   */
+  const cap = dailyMessageLimitFor(input.userId);
 
   return db.transaction(async (tx) => {
     await lockUser(tx, input.userId);
@@ -239,8 +248,8 @@ export async function insertUserMessageWithinLimit(input: {
         ),
       );
 
-    if (used >= LIMITS.messagesPerDay) {
-      throw new LimitError(messageLimitNotice(used, startOfNextUtcDay()));
+    if (used >= cap) {
+      throw new LimitError(messageLimitNotice(used, startOfNextUtcDay(), cap));
     }
 
     const [row] = await tx

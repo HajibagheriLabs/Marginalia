@@ -1,7 +1,6 @@
 import { toNextJsHandler } from "better-auth/next-js";
 
 import { auth } from "@/lib/auth";
-import { env } from "@/lib/env";
 import { rateLimitNotice } from "@/lib/limits";
 import { clientAddress, take } from "@/lib/rate-limit";
 
@@ -26,9 +25,17 @@ import { clientAddress, take } from "@/lib/rate-limit";
  * issues a session. This is the cheap layer that turns an unbounded online
  * guessing loop into a bounded one.
  *
- * THE DEMO ACCOUNT gets a second, stricter bucket on the same address. Its
- * credentials are published so a reviewer can sign in without registering,
- * which means they are published to everyone. See BUCKETS.demoPerIp.
+ * THE DEMO ACCOUNT is not special-cased here, and that is deliberate. Its
+ * credentials are published, so it looks like the account most worth
+ * throttling — but this route cannot tell which account a request is for
+ * without reading the body, and the body is a stream that Better Auth has to
+ * read afterwards. The previous version guessed, applying a stricter bucket to
+ * EVERY sign-in whenever a demo account existed, which penalised real users for
+ * the demo's existence.
+ *
+ * The published credential has its own front door instead: `/demo` mints the
+ * session, and that route applies `BUCKETS.demoPerIp` per address, where it can
+ * do so without guessing.
  *
  * ───────────────────────────────────────────────────────────────────────────
  * WHY THIS WRAPS THE HANDLER INSTEAD OF USING BETTER AUTH'S OWN LIMITER
@@ -65,27 +72,8 @@ export async function POST(request: Request): Promise<Response> {
   const { pathname } = new URL(request.url);
 
   if (THROTTLED.some((route) => pathname.endsWith(route))) {
-    const address = clientAddress(request);
-
-    const attempt = take("signIn", address);
+    const attempt = take("signIn", clientAddress(request));
     if (!attempt.ok) return refuse(attempt.resetAt);
-
-    /*
-     * THE DEMO ACCOUNT, if one is configured.
-     *
-     * Its email is the only credential this route can identify without reading
-     * the body, and it can only be identified when the client volunteers it —
-     * which it does, because @better-auth's client sends the email in the JSON
-     * body, not the URL. So instead of parsing the body, the stricter bucket
-     * is applied to EVERY sign-in from this address whenever a demo account
-     * exists. That is deliberately blunt: the demo deployment is the one where
-     * the credentials are public, and a visitor who is signing in as themselves
-     * three times a minute is already unusual.
-     */
-    if (env.DEMO_USER_EMAIL && pathname.endsWith("/sign-in/email")) {
-      const demo = take("demoPerIp", address);
-      if (!demo.ok) return refuse(demo.resetAt);
-    }
   }
 
   return handlers.POST(request);

@@ -104,7 +104,15 @@ function toSubject(heading: string): string {
 
 export interface Suggestion {
   question: string;
-  documentId: string;
+  /**
+   * The document the question was derived from, or null.
+   *
+   * Null only for the demo workspace's hand-picked examples, one of which is
+   * deliberately about something NO document covers — naming a document for it
+   * would be a claim the corpus does not support, in a product whose whole
+   * point is not making those.
+   */
+  documentId: string | null;
 }
 
 /**

@@ -62,6 +62,7 @@ import { NextResponse } from "next/server";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 
 import { getUser } from "@/lib/auth-server";
+import { DEMO_BANNER, isDemoUser } from "@/lib/demo";
 import { env } from "@/lib/env";
 import {
   LIMITS,
@@ -122,6 +123,19 @@ export async function POST(request: Request): Promise<NextResponse> {
       { error: "Sign in to upload documents." },
       { status: 401 },
     );
+  }
+
+  /*
+   * THE DEMO ACCOUNT CANNOT UPLOAD, and this is where that is decided.
+   *
+   * Not in the UI. The dropzone hides itself for the demo, but a Server Action
+   * and a route handler are public HTTP endpoints with generated names, and a
+   * hidden button is not a restriction. The account is shared, so one visitor's
+   * upload would sit in every later visitor's library, backed by blob storage
+   * and vector points nobody is going to clean up.
+   */
+  if (isDemoUser(user.id)) {
+    return NextResponse.json({ error: DEMO_BANNER.title }, { status: 403 });
   }
 
   // Per-user throttle, before any database work. Keyed by user rather than by

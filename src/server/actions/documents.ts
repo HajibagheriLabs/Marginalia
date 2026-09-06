@@ -8,6 +8,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { chunks, documentPages, documents } from "@/db/schema";
 import { requireDocumentAccess, requireUser } from "@/lib/auth-server";
+import { DEMO_BANNER, isDemoUser } from "@/lib/demo";
 import { env } from "@/lib/env";
 import {
   LIMITS,
@@ -90,6 +91,13 @@ export async function registerUploadedDocument(
   input: RegisterUploadInput,
 ): Promise<ActionResult<{ documentId: string }>> {
   const user = await requireUser();
+
+  // The second half of the demo upload block. The token route refuses first,
+  // so nothing should reach here — but this action is separately reachable and
+  // is what actually writes the row.
+  if (isDemoUser(user.id)) {
+    return { ok: false, error: DEMO_BANNER.title };
+  }
 
   const parsed = registerSchema.safeParse(input);
   if (!parsed.success) {
@@ -219,6 +227,21 @@ export async function deleteDocument(
   documentId: string,
 ): Promise<ActionResult<{ warnings: string[] }>> {
   const { user, document } = await requireDocumentAccess(documentId);
+
+  /*
+   * THE DEMO ACCOUNT CANNOT DELETE. The corpus IS the demo: one visitor
+   * removing the HIPAA regulation breaks it for everyone until somebody runs
+   * the reset script. Checked after the ownership check, so a demo visitor
+   * probing someone else's document id still gets a 404 rather than learning
+   * from the wording that the document exists.
+   */
+  if (isDemoUser(user.id)) {
+    return {
+      ok: false,
+      error: "Deleting is disabled in the demo workspace.",
+    };
+  }
+
   const warnings: string[] = [];
 
   // 1. THE BLOB. The only copy of the original file, and the only one costing
@@ -341,6 +364,12 @@ export async function checkUploadAllowance(
   count = 1,
 ): Promise<ActionResult<{ documentsRemaining: number; pagesRemaining: number }>> {
   const user = await requireUser();
+
+  // Refused before a byte moves, with the banner's own sentence, so the
+  // dropzone's message and the server's agree.
+  if (isDemoUser(user.id)) {
+    return { ok: false, error: DEMO_BANNER.title };
+  }
 
   const [used, pages] = await Promise.all([
     countUserDocuments(user.id),

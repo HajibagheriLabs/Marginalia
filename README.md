@@ -63,6 +63,32 @@ only metric that catches it. Every ranking constant is settable per run and `--c
 result files, so a retrieval change is a delta rather than a feeling. See
 [evals/README.md](evals/README.md), which is honest about what 44 questions can and cannot tell you.
 
+## The demo
+
+```bash
+npm run db:seed
+```
+
+Creates a shared demo account and ingests four public-domain documents end to end — real chunks, real
+vectors, no fixtures — then asks three questions of each and stores the answers. Visiting `/demo`
+signs a visitor in through the real sign-in path and drops them into a conversation that already has
+answers in it, so the Evidence Rail is marked up before they type anything.
+
+| | |
+| --- | --- |
+| Sign in | <https://localhost:3000/demo>, or `demo@marginalia.app` |
+| Password | `DEMO_USER_PASSWORD` from `.env.local` — published, not secret |
+| Reset | `npm run db:reset-demo` |
+
+The account cannot upload and cannot delete, and has a lower daily question cap. All three are
+enforced server-side at the mutation, not in the UI — a Server Action is a public HTTP endpoint and a
+hidden button stops nobody. **Asking questions works normally**, because a read-only demo of a chat
+product demonstrates nothing.
+
+`db:reset-demo` rebuilds the conversations and keeps the documents. Re-ingesting on every reset would
+make it a job you avoid running, and a reset you avoid running is a demo that stays broken. After a
+chunking change, use `npm run db:seed -- --force` instead, which rebuilds the corpus too.
+
 ## Limits and cost
 
 Everything runs on free tiers, so the app is bounded in both directions: what one account can consume,
@@ -84,6 +110,10 @@ Requests are also throttled by a token bucket per user on the chat and upload-to
 on sign-in, with a stricter bucket for the demo account whose credentials are public. The limiter is
 in-memory, which is the right trade on a free tier and is documented as such in `src/lib/rate-limit.ts`
 alongside the Upstash upgrade path.
+
+The free model pool allows 50 requests a day on an account with no purchased credits, shared across
+every model. The app counts against that figure itself, so it can say "the free model pool is
+exhausted for today" with a reset time rather than surfacing a wall of upstream 429s.
 
 Every embedding batch and every completion is recorded in `usage_events`, priced from a table in
 `src/lib/usage/pricing.ts`. Every entry in that table is zero, and honestly so: each OpenRouter model
@@ -154,7 +184,9 @@ npm run db:migrate
 | `npm run test:e2e`  | Playwright                                  |
 | `npm run eval`      | Score the retrieval pipeline (see [evals/README.md](evals/README.md)) |
 | `npm run eval:pages`| Re-derive `expected_pages` from the question set's phrases |
-| `npm run eval:fetch`| Re-download the eval corpus and check it against its pins |
+| `npm run eval:fetch`| Re-download the corpus and check it against its pins |
+| `npm run db:seed`   | Create the demo account and ingest its four documents |
+| `npm run db:reset-demo` | Restore the demo conversations, keeping the documents |
 
 `npm run eval` needs `DATABASE_URL`, the Qdrant credentials, and — unless run with
 `--retrieval-only` — `OPENROUTER_API_KEY`. It ingests into its own user row and its own
@@ -204,6 +236,7 @@ src/
     brand.ts         APP_NAME — the product name lives here and nowhere else
     env.ts           zod-validated environment, parsed at boot
     env.file.ts      .env loader for processes Next.js does not start
+    demo.ts          the demo account's identity, restrictions, and banner copy
     limits.ts        every per-user ceiling, and the sentences that explain them
     rate-limit.ts    token buckets and the shared free-tier model counters
     chat/            the conversation wire format, answer markdown, titles
@@ -213,10 +246,11 @@ src/
     usage/           limit enforcement, the price table, the meter
     vector/          Qdrant client and the single filtered search() helper
     viewer/          page model, in-document search, citation anchors
-scripts/             build steps (copying the PDF.js runtime into public/)
+scripts/             build steps, the demo seed, and the demo reset
   server/            server actions and route handlers
 evals/
-  dataset/           three public-domain documents, committed as text
+  dataset/           four public-domain documents, committed as text
+    SOURCES.md       where each came from, and under what licence
   questions.jsonl    44 questions; expected_pages derived, not typed
   results/           one JSON per run, tagged with a config hash
   src/               the harness: ingest, run, score, report, compare

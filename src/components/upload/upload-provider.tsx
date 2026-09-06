@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import { upload } from "@vercel/blob/client";
 
 import { useLimitDialog } from "@/components/limit-dialog";
+import { isDemoUser } from "@/lib/demo";
 import {
   checkUploadAllowance,
   registerUploadedDocument,
@@ -80,6 +81,16 @@ export interface UploadItem {
 }
 
 interface UploadContextValue {
+  /**
+   * True when this account may not upload at all — currently only the shared
+   * demo workspace.
+   *
+   * Exposed on the context rather than passed down, because the dropzone wraps
+   * the reading pane, which is a Server Component that has no reason to know
+   * about accounts. A COURTESY only: the refusal that matters is in the Blob
+   * token route and in `registerUploadedDocument`.
+   */
+  uploadsDisabled: boolean;
   items: UploadItem[];
   /**
    * Checks the account's allowance, validates each file, then queues.
@@ -135,6 +146,8 @@ export function UploadProvider({
   const router = useRouter();
   const { showLimit } = useLimitDialog();
   const [items, setItems] = useState<UploadItem[]>([]);
+
+  const uploadsDisabled = isDemoUser(userId);
 
   /** Waiting to run, in order. */
   const pendingRef = useRef<PendingUpload[]>([]);
@@ -281,6 +294,9 @@ export function UploadProvider({
   const enqueue = useCallback(
     async (files: File[]) => {
       if (files.length === 0) return;
+      // Nothing is queued and no round trip is made. The server would refuse
+      // anyway; this just avoids showing a demo visitor four failed rows.
+      if (uploadsDisabled) return;
 
       // Ask before transferring. The answer is about the ACCOUNT, so it is
       // asked once for the whole drop rather than once per file, and a drop of
@@ -333,7 +349,7 @@ export function UploadProvider({
       pendingRef.current.push(...accepted);
       void pump();
     },
-    [pump, showLimit],
+    [pump, showLimit, uploadsDisabled],
   );
 
   const cancel = useCallback(
@@ -384,8 +400,16 @@ export function UploadProvider({
   }, []);
 
   const value = useMemo<UploadContextValue>(
-    () => ({ items, enqueue, cancel, retry, dismiss, clearFinished }),
-    [items, enqueue, cancel, retry, dismiss, clearFinished],
+    () => ({
+      uploadsDisabled,
+      items,
+      enqueue,
+      cancel,
+      retry,
+      dismiss,
+      clearFinished,
+    }),
+    [uploadsDisabled, items, enqueue, cancel, retry, dismiss, clearFinished],
   );
 
   return (

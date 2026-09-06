@@ -32,8 +32,18 @@ export default function Home() {
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <ThemeToggle />
+          {/* The PRIMARY action is the demo, not the workspace. A visitor with
+              no account who clicks "Open the workspace" gets a sign-in form;
+              one who clicks this gets four ingested documents and four
+              answered conversations. Signing in is the secondary path because
+              it is the one that asks for something first. */}
+          <Button asChild variant="outline">
+            <Link href="/app">Sign in</Link>
+          </Button>
           <Button asChild>
-            <Link href="/app">Open the workspace</Link>
+            <Link href="/demo" prefetch={false}>
+              Try the demo
+            </Link>
           </Button>
         </div>
       </header>

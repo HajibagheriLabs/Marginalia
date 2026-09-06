@@ -46,11 +46,14 @@ export function LibraryRail({
   conversations,
   user,
   initialCollapsed,
+  uploadsDisabled,
 }: {
   documents: DocumentListItemRow[];
   conversations: ConversationSummary[];
   user: { name: string; email: string };
   initialCollapsed: boolean;
+  /** Hides the upload control. See the note on RailBody's own prop. */
+  uploadsDisabled?: boolean;
 }) {
   const [collapsed, setCollapsed] = useState(initialCollapsed);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -97,6 +100,7 @@ export function LibraryRail({
             conversations={conversations}
             activeDocumentId={activeDocumentId}
             user={user}
+            uploadsDisabled={uploadsDisabled}
             onNavigate={() => setDrawerOpen(false)}
             headerAction={
               <Button
@@ -124,6 +128,7 @@ export function LibraryRail({
             conversations={conversations}
             activeDocumentId={activeDocumentId}
             user={user}
+            uploadsDisabled={uploadsDisabled}
             collapsed={collapsed}
             headerAction={
               <Button

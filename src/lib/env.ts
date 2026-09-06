@@ -119,15 +119,38 @@ const serverSchema = z
     EMBEDDING_MODEL: z.string().min(1).default("Xenova/bge-small-en-v1.5"),
     EMBEDDING_DIMENSIONS: z.coerce.number().int().positive().default(384),
 
-    // Retrieval switches. Both default OFF so the app works end to end with
-    // neither, and so the eval harness can measure each one against a baseline
-    // rather than against an assumption.
+    // ── RERANKING ──────────────────────────────────────────────────────────
+    //
+    // ON BY DEFAULT, and that default was earned rather than assumed. It used
+    // to be off, with a comment saying it should stay workable off until
+    // something measured it. The eval harness measured it, over 38 answerable
+    // questions on the corpus in evals/dataset/:
+    //
+    //     recall@5   86.8% -> 92.1%     (+5.3 points)
+    //     MRR        0.736 -> 0.788     (+0.053)
+    //     recall@10  97.4% -> 94.7%     (-2.6 points; one question fell out)
+    //     retrieval  2.9 s -> 5.0 s p50 (+2.1 s)
+    //
+    // The trade is ordering quality against latency, and it is worth taking
+    // because the failures it fixes are the expensive kind: two of the three
+    // questions the system wrongly declined were declined precisely because the
+    // answering passage sat outside the top 8 it was shown. Reproduce with
+    // `npm run eval -- --compare baseline-retrieval rerank-on`, and turn it off
+    // with RETRIEVAL_RERANKER=off — it must stay workable off, which the
+    // harness checks on every run that passes --no-rerank.
     //
     // `local` runs the cross-encoder Xenova/ms-marco-MiniLM-L-6-v2 in this
-    // process, the same way embeddings run. There is deliberately no hosted
-    // option: every reranking API is metered, and this project runs with no
-    // card on file.
-    RETRIEVAL_RERANKER: z.enum(["off", "local"]).default("off"),
+    // process, the same way embeddings do.
+    //
+    // THERE IS NO HOSTED OPTION, and not for lack of looking. Every commercial
+    // reranking API is metered, and this project runs with no card on file.
+    // OpenRouter — the one gateway this app already talks to — has no reranking
+    // and no embedding models at all: its catalogue is 431 models whose output
+    // modalities are text, image, and audio, with nothing that returns a vector
+    // or a relevance score. Checked against GET https://openrouter.ai/api/v1/models.
+    // So "use a free hosted reranker" is not a configuration this project
+    // declined to add; it is not on offer.
+    RETRIEVAL_RERANKER: z.enum(["off", "local"]).default("local"),
     RETRIEVAL_RERANK_MODEL: z
       .string()
       .min(1)
@@ -158,8 +181,23 @@ const serverSchema = z
     // this explicitly for a container deployment with a real volume.
     TRANSFORMERS_CACHE_DIR: optional(z.string().min(1)),
 
-    // Optional seeded account, so a reviewer can sign in without registering.
-    DEMO_USER_EMAIL: optional(z.email()),
+    /**
+     * The demo account's password.
+     *
+     * PUBLISHED, NOT SECRET. `/demo` hands out a session for it to anyone who
+     * asks, and the README prints it. It lives in the environment rather than
+     * in source anyway, for two reasons: a deployment that has not been seeded
+     * should not appear to have a working demo, and rotating it should be an
+     * env change plus a re-seed rather than a commit.
+     *
+     * The demo account's EMAIL is not here — it is a constant in
+     * src/lib/demo.ts, alongside the fixed user id, because three separate
+     * places have to agree on it and a configurable identity would be three
+     * places that can disagree.
+     *
+     * Optional: an unseeded deployment is a valid deployment. `/demo` answers
+     * 503 with the command that fixes it rather than pretending.
+     */
     DEMO_USER_PASSWORD: optional(z.string().min(8)),
   });
 

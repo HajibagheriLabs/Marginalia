@@ -105,11 +105,36 @@ function expectChunkInvariants(
     expect(chunks[i].charEnd).toBeGreaterThan(chunks[i - 1].charEnd);
   }
 
-  // The floor. A single-chunk document is exempt: there is no neighbour to
-  // merge a short document into, and refusing to index it would be worse.
+  /*
+   * THE FLOOR, and its one deliberate exception.
+   *
+   * No chunk comes out under `minTokens` — a fragment pollutes retrieval, so
+   * the merge pass absorbs it into its neighbour.
+   *
+   * EXCEPT a chunk that opens a section. Merging one of those backwards would
+   * put two different sections in one chunk, and `section_path` is taken from
+   * the chunk's first unit, so the breadcrumb would then name the wrong section
+   * for most of the body. A citation chip naming the wrong clause is worse than
+   * a short chunk, so a whole short section is allowed to stay short. See
+   * `mergeUndersized`.
+   *
+   * A single-chunk document is exempt for a different reason: there is no
+   * neighbour at all, and refusing to index it would be worse.
+   */
   if (chunks.length > 1) {
-    for (const chunk of chunks) {
-      expect(chunk.tokenCount).toBeGreaterThanOrEqual(min);
+    for (const [index, chunk] of chunks.entries()) {
+      // Compared by breadcrumb rather than by looking for a `#` in the text:
+      // headings are also detected from short ALL-CAPS lines, and a regex here
+      // would test the fixture's formatting rather than the chunker's rule.
+      const opensSection =
+        index === 0 || chunk.sectionPath !== chunks[index - 1].sectionPath;
+
+      if (chunk.tokenCount < min) {
+        expect(
+          opensSection,
+          `chunk ${chunk.ordinal} is ${chunk.tokenCount} tokens and does not open a section`,
+        ).toBe(true);
+      }
     }
   }
 
@@ -743,7 +768,20 @@ describe("the minimum chunk size", () => {
     expectFullCoverage(text, chunks);
   });
 
-  it("does not emit a fragment for a section with almost no body", () => {
+  it("keeps a nearly empty section as its own short chunk", () => {
+    /*
+     * "## 1 Definitions / Not applicable." is far under the floor, and the
+     * floor exists because fragments pollute retrieval. It is STILL kept as its
+     * own chunk, because the only place to merge it is into section 2 — and
+     * `section_path` is taken from a chunk's first unit, so the result would be
+     * a chunk labelled "1 Definitions" whose body is almost entirely section 2.
+     *
+     * That trade is the one the design rules already make explicit: a citation
+     * chip naming the wrong clause is worse than a small chunk, because the
+     * breadcrumb is what makes a citation legible in the first place. A
+     * two-word chunk that is honestly labelled can at worst be retrieved and
+     * ignored; a mislabelled one sends the reader to the wrong clause.
+     */
     const text = document(
       "## 1 Definitions",
       "Not applicable.",
@@ -753,8 +791,19 @@ describe("the minimum chunk size", () => {
     const chunks = chunkDocument({ text, pages: singlePage(text) });
 
     expectChunkInvariants(text, chunks);
-    for (const chunk of chunks) {
-      expect(chunk.tokenCount).toBeGreaterThanOrEqual(CHUNKING.minTokens);
+
+    const definitions = chunks[0];
+    expect(definitions.sectionPath).toBe("1 Definitions");
+    expect(definitions.text).toContain("Not applicable.");
+    // The short section did not drag section 2 in with it.
+    expect(definitions.text).not.toContain("## 2 Scope");
+
+    // Every OTHER chunk still clears the floor: the exception is only for a
+    // chunk that opens a section, not a general licence to emit fragments.
+    for (const chunk of chunks.slice(1)) {
+      if (chunk.sectionPath === chunks[chunks.indexOf(chunk) - 1].sectionPath) {
+        expect(chunk.tokenCount).toBeGreaterThanOrEqual(CHUNKING.minTokens);
+      }
     }
   });
 });

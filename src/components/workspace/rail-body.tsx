@@ -34,6 +34,7 @@ export function RailBody({
   conversations,
   activeDocumentId,
   user,
+  uploadsDisabled = false,
   collapsed = false,
   headerAction,
   onNavigate,
@@ -42,6 +43,13 @@ export function RailBody({
   conversations: ConversationSummary[];
   activeDocumentId: string | null;
   user: { name: string; email: string };
+  /**
+   * Hides the upload control. A COURTESY, not the restriction — the restriction
+   * is in the Blob token route and in `registerUploadedDocument`, because a
+   * Server Action is a public endpoint and a hidden button stops nobody. This
+   * exists so a demo visitor is not offered something that will refuse them.
+   */
+  uploadsDisabled?: boolean;
   /** The 56px icon rail. Never used inside the mobile drawer. */
   collapsed?: boolean;
   /** The collapse toggle, or the drawer's close button. */
@@ -74,21 +82,23 @@ export function RailBody({
         {headerAction}
       </div>
 
-      <div
-        className={cn(
-          "shrink-0",
-          collapsed ? "flex justify-center p-2" : "flex flex-col gap-1.5 p-3",
-        )}
-      >
-        <UploadButton
-          collapsed={collapsed}
-          className={collapsed ? undefined : "w-full"}
-        />
-        {/* The accepted types and the size cap, stated before anything is
-            picked. A limit you only meet by failing is a limit the interface
-            chose not to mention. */}
-        {collapsed ? null : <UploadHint className="text-[11px] leading-4" />}
-      </div>
+      {uploadsDisabled ? null : (
+        <div
+          className={cn(
+            "shrink-0",
+            collapsed ? "flex justify-center p-2" : "flex flex-col gap-1.5 p-3",
+          )}
+        >
+          <UploadButton
+            collapsed={collapsed}
+            className={collapsed ? undefined : "w-full"}
+          />
+          {/* The accepted types and the size cap, stated before anything is
+              picked. A limit you only meet by failing is a limit the interface
+              chose not to mention. */}
+          {collapsed ? null : <UploadHint className="text-[11px] leading-4" />}
+        </div>
+      )}
 
       <div
         onClick={(event) => {

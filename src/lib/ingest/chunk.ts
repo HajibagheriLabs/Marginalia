@@ -91,16 +91,27 @@ export const CHUNKING = {
    * diagnose from the outside, which is why the budget is set to make it
    * unreachable rather than to be caught later.
    *
-   * MEASURED, NOT ESTIMATED. `budget.integration.test.ts` runs a worst-case
-   * document — long title, three-level breadcrumb, dense clause prose —
-   * through the real BGE tokenizer and reports:
+   * MEASURED, NOT ESTIMATED, and measured against the REAL CORPUS rather than
+   * against a synthetic document. `budget.integration.test.ts` runs both a
+   * hand-built worst case and the three documents in evals/dataset/ through
+   * the real BGE tokenizer. What that says:
    *
-   *     WordPiece-per-cl100k ratio, English legal prose ....... 1.19
-   *     context header for a deep three-level breadcrumb ...... 58 tokens
-   *     worst augmented chunk at 300/380/70 .................. 462 / 512
+   *     WordPiece-per-cl100k, clause-heavy English legal prose ....... 1.19
+   *     WordPiece-per-cl100k, dense numeric and citation prose ....... 1.44
+   *     context header for a deep three-level breadcrumb ............. 58 tokens
+   *     worst augmented chunk at 260/320/60, real corpus ............ 459 / 512
    *
-   * These are the numbers that budget is set to, and that test asserts the
-   * bound holds. It is not a guess with a safety factor bolted on.
+   * THE RATIO IS NOT A CONSTANT, and assuming it was is what broke the
+   * previous budget. At 300/380/70 the synthetic legal document measured a
+   * comfortable 462/512 — and the same budget on the real corpus produced
+   * THIRTEEN chunks over the limit, the worst at 556, because the clinical
+   * guideline is full of things WordPiece splits far harder than prose:
+   * bracketed reference numbers, "≥50 MME/day", section numbers, dosage
+   * units. A budget validated only against prose is a budget validated against
+   * the easy half of the corpus.
+   *
+   * The eval harness is what surfaced it: ingestion logged TRUNCATION warnings
+   * naming lengths of 528-556 on a budget the test said was safe.
    *
    * WHY THE CEILING IS THE NUMBER THAT MATTERS. A stored chunk is not
    * `targetTokens` long: the packer fills to `maxTokens`, the merge pass can
@@ -120,22 +131,22 @@ export const CHUNKING = {
    * directly, which removes the ratio from the reasoning entirely. The seam is
    * already here; see `TokenCounter`.
    */
-  targetTokens: 300,
+  targetTokens: 260,
 
   /**
    * Hard ceiling. A chunk may run past `targetTokens` to finish absorbing a
    * unit it has already started on, but never past this. The gap between the
    * two is the slack that lets a paragraph land whole instead of being torn.
    *
-   * Kept close to the target — 100 tokens of slack rather than 200 — because
-   * the whole budget is now sized against the 512-token WordPiece limit, and a
-   * wide ceiling spends the headroom that keeps the upper tail of chunks from
-   * being truncated.
+   * Kept close to the target — 60 tokens of slack — because the whole budget
+   * is sized against the 512-token WordPiece limit, and a wide ceiling spends
+   * exactly the headroom that keeps the upper tail of chunks from being
+   * truncated. The tail is what meets the limit, not the target.
    *
    * The one documented exception is the merge pass below, which may push a
    * chunk to `maxTokens + minTokens` rather than emit a fragment.
    */
-  maxTokens: 380,
+  maxTokens: 320,
 
   /**
    * No chunk below this survives; it is merged into its neighbour.
@@ -144,11 +155,12 @@ export const CHUNKING = {
    * packing rather than during it, because whether a chunk is too small is only
    * knowable once it is closed.
    *
-   * Scaled with the target: at a 300-token budget a 100-token floor would make
+   * Scaled with the target: at a 260-token budget a 100-token floor would make
    * nearly a third of a chunk the minimum viable passage, which is too coarse
-   * to absorb a short clause without distorting it.
+   * to absorb a short clause without distorting it. It also lands on top of
+   * `maxTokens` in the merge pass, so it is part of the ceiling arithmetic.
    */
-  minTokens: 70,
+  minTokens: 60,
 
   /**
    * How full a chunk must be before a heading is allowed to close it, as a
@@ -172,13 +184,20 @@ export const CHUNKING = {
    * legible in the first place.
    *
    * Raise it toward 1.0 to pack fuller, more topic-mixed chunks and accept
-   * approximate breadcrumbs. That is a trade worth measuring once the eval
-   * harness exists; it is not one worth guessing at now.
+   * approximate breadcrumbs. That is a trade worth measuring with the eval
+   * harness — `npm run eval -- --section-break-ratio 0.5` — rather than
+   * guessing at.
+   *
+   * AT 0 THE THRESHOLD IS GENUINELY 0. It used to be floored at `minTokens`,
+   * which quietly defeated the setting: a section tail under the floor could
+   * not be closed by the next heading, so the chunk swallowed that heading and
+   * kept filling, and the breadcrumb named the wrong section for most of the
+   * body. See `packUnits` and `mergeUndersized`.
    */
   sectionBreakRatio: 0,
 
   /**
-   * Overlap, as a fraction of `targetTokens` (0.15 -> ~45 tokens).
+   * Overlap, as a fraction of `targetTokens` (0.15 -> ~39 tokens).
    *
    * Overlap exists for one reason: a sentence at a chunk boundary answers a
    * question using a subject named in the previous sentence, and without
@@ -910,16 +929,44 @@ interface Packed {
   tokens: number;
 }
 
+/** Does this range hold anything but headings? */
+function hasBody(units: Unit[], chunk: Packed): boolean {
+  for (let i = chunk.first; i <= chunk.last; i += 1) {
+    if (!units[i].isHeading) return true;
+  }
+  return false;
+}
+
 function packUnits(units: Unit[], options: ResolvedOptions): Packed[] {
   const packed: Packed[] = [];
   let current: Packed | null = null;
 
-  // A heading only closes a chunk once the chunk is this full. See
-  // CHUNKING.sectionBreakRatio for why a section boundary is preferred rather
-  // than obeyed.
-  const sectionBreakAt = Math.max(
-    options.minTokens,
-    Math.round(options.targetTokens * options.sectionBreakRatio),
+  /*
+   * How full a chunk must be before a heading may close it.
+   *
+   * NO `minTokens` FLOOR HERE, and that is the whole point of the constant. It
+   * used to be `max(minTokens, target * ratio)`, which quietly broke the rule
+   * it was meant to serve: when a section's tail landed under `minTokens`, the
+   * heading could not close it, so the chunk swallowed the NEXT section's
+   * heading and kept filling — and `section_path` is taken from the chunk's
+   * first unit, so the breadcrumb then named the wrong section for most of the
+   * chunk's body.
+   *
+   * That is the failure `sectionBreakRatio: 0` exists to prevent. A citation
+   * chip naming the wrong clause is worse than a small chunk: the breadcrumb is
+   * what makes a citation legible, and a short chunk that is exactly one clause
+   * is a better retrieval unit than a full one holding two unrelated sections.
+   *
+   * Runts are still not emitted — `mergeUndersized` absorbs them into the
+   * PREVIOUS chunk of the SAME section immediately afterwards. The only chunk
+   * that can now come out under the floor is one that is a whole tiny section,
+   * which has nowhere honest to merge to.
+   *
+   * Raise the ratio toward 1.0 to pack fuller, topic-mixed chunks and accept
+   * approximate breadcrumbs.
+   */
+  const sectionBreakAt = Math.round(
+    options.targetTokens * options.sectionBreakRatio,
   );
 
   for (let index = 0; index < units.length; index += 1) {
@@ -928,7 +975,22 @@ function packUnits(units: Unit[], options: ResolvedOptions): Packed[] {
     if (current) {
       const full = current.tokens >= options.targetTokens;
       const overflows = current.tokens + unit.tokens > options.maxTokens;
-      const sectionBreak = unit.isHeading && current.tokens >= sectionBreakAt;
+      /*
+       * A heading closes the chunk — but only one that already has a BODY.
+       *
+       * Without that condition a run of nested headings ("# Agreement",
+       * "## Article 7", "### 7.1 For cause") would break after each one and
+       * emit three chunks containing nothing but a heading line. Those are
+       * useless as retrieval units and they strand the breadcrumb: the body
+       * they introduce ends up in a chunk whose first unit is a paragraph, so
+       * the deep path is lost.
+       *
+       * Consecutive headings belong with the text they introduce.
+       */
+      const sectionBreak =
+        unit.isHeading &&
+        current.tokens >= sectionBreakAt &&
+        hasBody(units, current);
 
       if (full || overflows || sectionBreak) {
         packed.push(current);
@@ -965,14 +1027,30 @@ function packUnits(units: Unit[], options: ResolvedOptions): Packed[] {
  * intended trade: the floor is a rule about retrieval quality, the ceiling is a
  * budget, and the rule wins.
  */
-function mergeUndersized(packed: Packed[], options: ResolvedOptions): Packed[] {
+function mergeUndersized(
+  packed: Packed[],
+  units: Unit[],
+  options: ResolvedOptions,
+): Packed[] {
   if (packed.length <= 1) return packed;
+
+  /*
+   * A chunk that OPENS A SECTION may not be merged into the one before it.
+   *
+   * Merging is how runts are avoided, but merging across a heading reintroduces
+   * exactly the bug the packer now prevents: the combined chunk takes its
+   * `section_path` from its first unit and then contains a different section's
+   * text. A short section is allowed to produce a short chunk; a mislabelled
+   * one is not.
+   */
+  const opensSection = (chunk: Packed): boolean =>
+    units[chunk.first]?.isHeading === true;
 
   const merged: Packed[] = [];
 
   for (const chunk of packed) {
     const previous = merged[merged.length - 1];
-    if (previous && chunk.tokens < options.minTokens) {
+    if (previous && chunk.tokens < options.minTokens && !opensSection(chunk)) {
       previous.last = chunk.last;
       previous.tokens += chunk.tokens;
       continue;
@@ -980,8 +1058,14 @@ function mergeUndersized(packed: Packed[], options: ResolvedOptions): Packed[] {
     merged.push({ ...chunk });
   }
 
-  // The first chunk has no predecessor to merge into, so it merges forward.
-  while (merged.length > 1 && merged[0].tokens < options.minTokens) {
+  // The first chunk has no predecessor to merge into, so it merges forward —
+  // unless the chunk after it opens a section, in which case there is nothing
+  // to merge with and a short opening chunk is the honest result.
+  while (
+    merged.length > 1 &&
+    merged[0].tokens < options.minTokens &&
+    !opensSection(merged[1])
+  ) {
     const [first, second] = merged;
     second.first = first.first;
     second.tokens += first.tokens;
@@ -1152,7 +1236,7 @@ export function chunkDocument(input: ChunkInput): DocumentChunk[] {
   const units = buildUnits(text, blocks, options);
   if (units.length === 0) return [];
 
-  const packed = mergeUndersized(packUnits(units, options), options);
+  const packed = mergeUndersized(packUnits(units, options), units, options);
   const overlapTokens = Math.round(options.targetTokens * options.overlapRatio);
 
   return packed.map((chunk, index) => {

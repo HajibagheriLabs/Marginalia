@@ -34,8 +34,17 @@ const AUTH_ROUTES = [
   "/reset-password",
 ];
 
-/** Reachable signed out. Everything else redirects to /sign-in. */
-const PUBLIC_ROUTES = ["/", ...AUTH_ROUTES];
+/**
+ * Reachable signed out. Everything else redirects to /sign-in.
+ *
+ * `/demo` is here because its whole job is to CREATE a session: bouncing a
+ * signed-out visitor to /sign-in would mean the one-click demo requires a
+ * sign-in, which is the opposite of what it is for. The route mints its session
+ * through the real `signInEmail` path, so being public costs nothing — it hands
+ * out a session for a published password, exactly as typing that password into
+ * the sign-in form would.
+ */
+const PUBLIC_ROUTES = ["/", "/demo", ...AUTH_ROUTES];
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;

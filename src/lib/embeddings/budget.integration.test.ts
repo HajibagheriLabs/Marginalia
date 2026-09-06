@@ -1,7 +1,11 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
 import { AutoTokenizer } from "@huggingface/transformers";
 import { describe, expect, it, vi } from "vitest";
 
 import { CHUNKING, chunkDocument, embeddingText } from "@/lib/ingest/chunk";
+import { assemblePages, paginateText } from "@/lib/ingest/extract";
 
 import { createLocalEmbeddingProvider } from "./local";
 
@@ -19,9 +23,10 @@ import { createLocalEmbeddingProvider } from "./local";
  * ───────────────────────────────────────────────────────────────────────────
  * WHAT THE MEASUREMENT SAYS
  *
- *   WordPiece-per-cl100k ratio, English legal prose ....... 1.19
- *   context header for a deep three-level breadcrumb ...... 58 tokens
- *   worst augmented chunk at 300 / 380 / 70 .............. 462 / 512
+ *   WordPiece-per-cl100k, clause-heavy English legal prose ....... 1.19
+ *   WordPiece-per-cl100k, dense numeric and citation prose ....... 1.44
+ *   context header for a deep three-level breadcrumb ............. 58 tokens
+ *   worst augmented chunk at 260 / 320 / 60 ..................... 459 / 512
  *
  * THE CEILING IS THE NUMBER THAT MEETS THE LIMIT, NOT THE TARGET. A stored
  * chunk is not `targetTokens` long: the packer fills to `maxTokens`, the merge
@@ -31,10 +36,25 @@ import { createLocalEmbeddingProvider } from "./local";
  * the kind of arithmetic that is convincing on paper and wrong in practice, and
  * exactly why this file exists.
  *
- * The first test is the guard on the budget. The second is the guard on the
- * guard: truncation must be LOUD whatever the budget is set to, so that a
- * future retune that crosses the line shows up in logs rather than only as
- * quietly worse retrieval.
+ * ───────────────────────────────────────────────────────────────────────────
+ * WHY THERE ARE NOW TWO WORST CASES
+ *
+ * Because one was not enough, and the failure was live rather than theoretical.
+ * A 300/380/70 budget measured 462/512 against the legal document below and
+ * was declared safe — and then produced THIRTEEN over-limit chunks on the real
+ * eval corpus, the worst at 556, because the ratio is not a constant. Legal
+ * prose runs about 1.19 WordPiece per cl100k token; the clinical guideline runs
+ * up to 1.44, because it is full of the things WordPiece splits hardest:
+ * bracketed reference numbers, "≥50 MME/day", dosage units, section numbers.
+ *
+ * A budget validated only against prose is validated against the easy half of
+ * the corpus. So `buildDenseNumericDocument` exists as the pessimistic case,
+ * and the assertion runs over both.
+ *
+ * The first two tests guard the budget. The last one guards the guard:
+ * truncation must be LOUD whatever the budget is set to, so a future retune
+ * that crosses the line shows up in logs rather than only as quietly worse
+ * retrieval.
  * ───────────────────────────────────────────────────────────────────────────
  */
 
@@ -75,14 +95,55 @@ function buildWorstCaseDocument(): { title: string; text: string } {
   return { title, text: parts.join("\n\n") };
 }
 
-function augmentedChunks(): string[] {
-  const { title, text } = buildWorstCaseDocument();
+/**
+ * The OTHER worst case: dense numeric and citation prose.
+ *
+ * Modelled on the clinical guideline in evals/dataset/, which is what actually
+ * broke the previous budget. Everything here is chosen because WordPiece splits
+ * it far harder than it splits words: bracketed reference lists, comparison
+ * operators against numbers, dosage units, and multi-part section numbers. This
+ * is the shape that produces a 1.44 ratio where prose produces 1.19.
+ */
+function buildDenseNumericDocument(): { title: string; text: string } {
+  const title =
+    "Clinical Practice Guideline for Prescribing Analgesics and Adjunctive " +
+    "Therapies in Ambulatory Care — United States, 2026 Update";
+
+  const para = (n: number) =>
+    `Recommendation ${n}.${n}.${n}: For patients aged ≥18 years receiving ` +
+    `≥50 MME/day, clinicians should reassess within 1–4 weeks ( ${n} , ` +
+    `${n + 1} , ${n + 2} – ${n + 9} ). Overdose risk is 1.9–4.6 times higher ` +
+    `at 50–<100 MME/day relative to <20 MME/day ( ${n + 11} , ${n + 12} ), ` +
+    `and 2.0–8.9 times higher at ≥100 MME/day ( ${n + 13} – ${n + 18} ). ` +
+    `Coprescription of benzodiazepines increased adjusted odds to 3.86 ` +
+    `(95% CI = 2.14–6.98; p<0.001) in a cohort of 12,847 patients ` +
+    `( ${n + 19} , ${n + 20} ).`;
+
+  const parts: string[] = [
+    "# Clinical Practice Guideline for Prescribing Analgesics",
+    "## Recommendations for Initiating and Continuing Opioid Therapy",
+    "### 4.7.2 Dosage thresholds, tapering schedules, and risk mitigation",
+  ];
+  for (let i = 1; i <= 60; i += 1) parts.push(para(i));
+
+  return { title, text: parts.join("\n\n") };
+}
+
+function augment(document: { title: string; text: string }): string[] {
   const chunks = chunkDocument({
-    text,
-    pages: [{ pageNumber: 1, charStart: 0, charEnd: text.length }],
+    text: document.text,
+    pages: [{ pageNumber: 1, charStart: 0, charEnd: document.text.length }],
   });
   expect(chunks.length).toBeGreaterThan(3);
-  return chunks.map((chunk) => embeddingText(chunk, title));
+  return chunks.map((chunk) => embeddingText(chunk, document.title));
+}
+
+/** Both worst cases, so the assertion covers the whole corpus, not half of it. */
+function augmentedChunks(): string[] {
+  return [
+    ...augment(buildWorstCaseDocument()),
+    ...augment(buildDenseNumericDocument()),
+  ];
 }
 
 async function wordPieceLengths(texts: string[]): Promise<number[]> {
@@ -93,6 +154,56 @@ async function wordPieceLengths(texts: string[]): Promise<number[]> {
         -1,
       ) as number,
   );
+}
+
+/**
+ * THE REAL CORPUS, chunked exactly as ingestion chunks it.
+ *
+ * The three documents in evals/dataset/ are committed text with pinned
+ * hashes, so this is deterministic and needs no network. It exists because the
+ * two synthetic cases above are STILL more optimistic than reality: they
+ * measure 381/512 where the real corpus measures 459, and it was the real
+ * corpus that produced the thirteen truncated chunks nobody's hand-built
+ * worst case predicted.
+ *
+ * A guard written from imagination measures the failures you thought of. This
+ * one measures the documents the product is actually pointed at.
+ */
+const CORPUS = [
+  ["45 CFR Part 164 — Security and Privacy (HIPAA)", "hipaa-45-cfr-164.txt"],
+  [
+    "CDC Clinical Practice Guideline for Prescribing Opioids for Pain — United States, 2022",
+    "cdc-opioid-guideline-2022.txt",
+  ],
+  [
+    "FAR 52.212-4 — Contract Terms and Conditions, Commercial Products and Commercial Services",
+    "far-52-212-4.txt",
+  ],
+] as const;
+
+async function corpusAugmentedChunks(): Promise<string[]> {
+  const out: string[] = [];
+
+  for (const [title, filename] of CORPUS) {
+    const file = path.join(process.cwd(), "evals", "dataset", filename);
+    const text = await readFile(file, "utf8");
+
+    // The same two functions ingestion uses for a text upload, so the chunk
+    // boundaries here are the boundaries production would produce.
+    const { pages } = assemblePages(paginateText(text));
+    const chunks = chunkDocument({
+      text,
+      pages: pages.map((page) => ({
+        pageNumber: page.pageNumber,
+        charStart: page.charStart,
+        charEnd: page.charEnd,
+      })),
+    });
+
+    for (const chunk of chunks) out.push(embeddingText(chunk, title));
+  }
+
+  return out;
 }
 
 describe.skipIf(skip)("chunk budget against the model's sequence limit", () => {
@@ -112,6 +223,23 @@ describe.skipIf(skip)("chunk budget against the model's sequence limit", () => {
 
     // With real headroom, so a denser document — a table of figures, a
     // non-English passage — does not quietly cross the line.
+    expect(longest).toBeLessThanOrEqual(SEQUENCE_LIMIT * 0.95);
+  }, 300_000);
+
+  it("keeps every chunk of the REAL corpus inside the limit", async () => {
+    // The assertion that would have caught the 300/380/70 regression. The two
+    // synthetic documents above passed it comfortably; these three did not.
+    const texts = await corpusAugmentedChunks();
+    const lengths = await wordPieceLengths(texts);
+    const longest = Math.max(...lengths);
+    const over = lengths.filter((length) => length > SEQUENCE_LIMIT).length;
+
+    console.info(
+      `[budget] evals/dataset: ${texts.length} chunks | longest ${longest}/` +
+        `${SEQUENCE_LIMIT} WordPiece | over limit ${over}`,
+    );
+
+    expect(over).toBe(0);
     expect(longest).toBeLessThanOrEqual(SEQUENCE_LIMIT * 0.95);
   }, 300_000);
 

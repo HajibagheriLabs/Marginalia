@@ -1,20 +1,23 @@
 {
   "note": [
-    "THE EVAL CORPUS. Three real documents, all in the public domain, all",
+    "THE EVAL AND DEMO CORPUS. Four real documents, all in the public domain, all",
     "fetched from stable government endpoints and converted to plain text by",
     "evals/src/dataset.ts.",
     "",
     "The converted .txt files are COMMITTED to the repository, so `npm run eval`",
     "works offline and against exactly the bytes the checked-in question set was",
-    "written for. `npm run eval:fetch` re-fetches from source and verifies each",
-    "file against the sha256 below; run it to prove the corpus has not drifted,",
-    "or with --update after deliberately changing a source.",
+    "written for, and `npm run db:seed` needs no network. `npm run eval:fetch`",
+    "re-fetches from source and verifies each file against the sha256 below; run",
+    "it to prove the corpus has not drifted, or with --update after deliberately",
+    "changing a source.",
     "",
-    "WHY THESE THREE: they are the three shapes this product exists for — a long",
+    "WHY THESE FOUR: they are the shapes this product exists for — a long",
     "regulation dense with cross-references, a clinical guideline written as",
-    "numbered recommendations, and a contract template of short numbered",
-    "clauses. Each stresses retrieval differently, and the differences show up",
-    "in the per-document breakdown of the report."
+    "numbered recommendations, a technical standard that is mostly tables, and a",
+    "contract template of short numbered clauses. Each stresses retrieval",
+    "differently.",
+    "",
+    "Licences and source URLs are also restated in prose in SOURCES.md."
   ],
   "documents": [
     {
@@ -36,6 +39,16 @@
       "filename": "cdc-opioid-guideline-2022.txt",
       "license": "Public domain — MMWR states that all material in the series is in the public domain and may be reproduced without permission.",
       "sha256": "d121112f82ec5f95871a934af41c8502bbf7f2a47aef41e19fac9b11dc00d26c"
+    },
+    {
+      "id": "nist-sp-800-63b",
+      "title": "NIST SP 800-63B — Digital Identity Guidelines: Authentication and Lifecycle Management",
+      "kind": "technical standard with tables",
+      "url": "https://pages.nist.gov/800-63-3/sp800-63b.html",
+      "format": "nist-html",
+      "filename": "nist-sp-800-63b.txt",
+      "license": "Public domain — a NIST Special Publication, a work of the United States Government (17 U.S.C. 105).",
+      "sha256": "144d048f54edd1bffb5da608b348e0a2fcce0935e21c4c1f5275d73cbf97259c"
     },
     {
       "id": "far-52-212-4",

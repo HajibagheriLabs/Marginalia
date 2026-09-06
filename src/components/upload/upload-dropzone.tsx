@@ -30,32 +30,45 @@ export function UploadDropzone({
   children: React.ReactNode;
   className?: string;
 }) {
-  const { enqueue } = useUploads();
+  const { enqueue, uploadsDisabled } = useUploads();
   const [dragging, setDragging] = useState(false);
   const depthRef = useRef(0);
 
-  const carriesFiles = (event: React.DragEvent) =>
-    Array.from(event.dataTransfer.types).includes("Files");
+  /*
+   * In the demo workspace the pane is not a drop target at all. Showing the
+   * "drop to upload" overlay and then silently doing nothing would be worse
+   * than not offering it — the banner already says uploads are disabled, and an
+   * overlay that contradicts it reads as a bug.
+   *
+   * Memoised because four `useCallback`s below depend on it, and a fresh
+   * closure per render would rebuild all four on every drag event.
+   */
+  const carriesFiles = useCallback(
+    (event: React.DragEvent) =>
+      !uploadsDisabled &&
+      Array.from(event.dataTransfer.types).includes("Files"),
+    [uploadsDisabled],
+  );
 
   const onDragEnter = useCallback((event: React.DragEvent) => {
     if (!carriesFiles(event)) return;
     event.preventDefault();
     depthRef.current += 1;
     setDragging(true);
-  }, []);
+  }, [carriesFiles]);
 
   const onDragLeave = useCallback((event: React.DragEvent) => {
     if (!carriesFiles(event)) return;
     depthRef.current = Math.max(0, depthRef.current - 1);
     if (depthRef.current === 0) setDragging(false);
-  }, []);
+  }, [carriesFiles]);
 
   const onDragOver = useCallback((event: React.DragEvent) => {
     if (!carriesFiles(event)) return;
     // Without this the browser navigates to the dropped file.
     event.preventDefault();
     event.dataTransfer.dropEffect = "copy";
-  }, []);
+  }, [carriesFiles]);
 
   const onDrop = useCallback(
     (event: React.DragEvent) => {
@@ -65,7 +78,7 @@ export function UploadDropzone({
       setDragging(false);
       void enqueue(Array.from(event.dataTransfer.files));
     },
-    [enqueue],
+    [carriesFiles, enqueue],
   );
 
   return (

@@ -47,7 +47,7 @@ export interface DatasetDocument {
   title: string;
   kind: string;
   url: string;
-  format: "ecfr-xml" | "cdc-mmwr-html";
+  format: "ecfr-xml" | "cdc-mmwr-html" | "nist-html";
   filename: string;
   license: string;
   /** sha256 of the CONVERTED text, hex. "PENDING" before the first pin. */
@@ -150,6 +150,70 @@ function fromCdcHtml(html: string): string {
   if (syndicate) body = syndicate[1];
 
   // Headings and block elements become line breaks; everything else collapses.
+  body = body
+    .replace(/<\/(h[1-6]|p|li|div|section|article|br)\s*>/gi, "\n")
+    .replace(/<(br|hr)\s*\/?>/gi, "\n")
+    .replace(/<h[1-6][^>]*>/gi, "\n\n");
+
+  return normalise(decodeEntities(stripTags(body)));
+}
+
+/**
+ * A NIST Special Publication, as readable text — TABLES INCLUDED.
+ *
+ * The one document in this corpus that is mostly tables: authenticator types
+ * against verifier requirements, assurance levels against permitted methods.
+ * Dropping them, as the MMWR converter does, would throw away the reason this
+ * document is here — a corpus of three prose documents does not show whether
+ * retrieval can answer "which authenticators are allowed at AAL2".
+ *
+ * Each row becomes one line of pipe-delimited cells, and the header row is
+ * repeated as the first line. That shape is chosen for the CHUNKER: a row is a
+ * complete thought on one line, so a chunk boundary lands between rows rather
+ * than mid-table, and the header travels with the rows in the same chunk often
+ * enough to keep the cells interpretable. Flattening to prose instead — "the
+ * value for AAL2 is X" — would be inventing sentences the document does not
+ * contain, which is exactly what a grounded-answer product must not do.
+ */
+function fromNistHtml(html: string): string {
+  let body = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<nav[\s\S]*?<\/nav>/gi, " ")
+    .replace(/<footer[\s\S]*?<\/footer>/gi, " ")
+    /*
+     * THE RENDER TIMESTAMP.
+     *
+     * This page carries a bare `<p>Sun, 06 Sep 2026 04:03:31 +0000</p>` — the
+     * moment the static site was built, not a fact about the document. Left in,
+     * it makes the converted text different on every fetch, so the sha256 pin
+     * reports drift forever and the one signal that would catch a real
+     * amendment becomes noise. Dropped by shape rather than by value: any
+     * paragraph whose entire content is an RFC-2822 date.
+     */
+    .replace(
+      /<p>\s*[A-Z][a-z]{2},\s+\d{1,2}\s+[A-Z][a-z]{2}\s+\d{4}\s+\d{2}:\d{2}:\d{2}\s+[+-]\d{4}\s*<\/p>/g,
+      " ",
+    );
+
+  // Tables first, before the generic tag strip flattens them into a run of
+  // disconnected words with no row boundaries left to recover.
+  body = body.replace(/<table[\s\S]*?<\/table>/gi, (table) => {
+    const rows: string[] = [];
+
+    for (const match of table.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)) {
+      const cells = [...match[1].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)]
+        .map((cell) => decodeEntities(stripTags(cell[1])).replace(/\s+/g, " ").trim())
+        .filter((cell) => cell.length > 0);
+
+      if (cells.length > 0) rows.push(cells.join(" | "));
+    }
+
+    // A blank line either side so the chunker treats the table as its own
+    // structural unit rather than gluing it to the paragraph above.
+    return rows.length > 0 ? `\n\n${rows.join("\n")}\n\n` : " ";
+  });
+
   body = body
     .replace(/<\/(h[1-6]|p|li|div|section|article|br)\s*>/gi, "\n")
     .replace(/<(br|hr)\s*\/?>/gi, "\n")
@@ -269,5 +333,7 @@ export function convert(document: DatasetDocument, raw: string): string {
       return fromEcfrXml(raw);
     case "cdc-mmwr-html":
       return fromCdcHtml(raw);
+    case "nist-html":
+      return fromNistHtml(raw);
   }
 }

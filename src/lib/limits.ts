@@ -74,23 +74,39 @@ export const LIMITS = {
 export const UPLOAD_LIMIT_LABEL = `${LIMITS.uploadBytes / (1024 * 1024)} MB`;
 
 /**
- * OPENROUTER'S FREE CEILINGS, as published for the free model pool.
+ * OPENROUTER'S FREE CEILINGS.
  *
  * These are NOT per user. The quota belongs to this application's OpenRouter
- * account and is shared by everyone using it, which is why it is counted
- * globally in the same limiter as the per-user buckets rather than alongside
- * the per-user limits above.
+ * account and is spent by whoever calls it, which is why it is counted globally
+ * in the same limiter as the per-user buckets rather than alongside the
+ * per-user limits above.
  *
- * The published figures are roughly 20 requests per minute and 200 per day
- * (https://openrouter.ai/docs/api-reference/limits). Counting them here is
- * what lets the app say "the free model pool is exhausted for today" WITH a
- * reset time, instead of discovering it as a wall of 429s from upstream.
- * Hitting our own counter produces a written sentence; hitting theirs produces
- * an error.
+ * ───────────────────────────────────────────────────────────────────────────
+ * 50 A DAY, MEASURED, NOT 200.
+ *
+ * This said 200 until the demo seed hit the real ceiling and OpenRouter said
+ * so in the response body:
+ *
+ *     Rate limit exceeded: free-models-per-day.
+ *     X-RateLimit-Limit: 50   X-RateLimit-Remaining: 0
+ *
+ * The daily allowance for an account with NO CREDITS PURCHASED is 50; buying
+ * 10 credits raises it to 1000. This project has no card on file, so 50 is the
+ * number that applies, and counting against 200 meant the app's own "the free
+ * model pool is exhausted" message could never fire before upstream's did —
+ * which is the entire point of counting.
+ *
+ * Raise this to 1000 only alongside actually buying those credits, and note
+ * that doing so does not make any model paid: the `:free` suffix rule in
+ * env.ts is what guarantees cost, and it is unaffected.
+ *
+ * The per-minute figure is unchanged and remains approximate; it has never
+ * been observed to bind before the daily one does.
  */
 export const FREE_POOL = {
   requestsPerMinute: 20,
-  requestsPerDay: 200,
+  /** 50 without purchased credits, 1000 with. See above; this app has none. */
+  requestsPerDay: 50,
 } as const;
 
 /**
@@ -210,13 +226,23 @@ export function pageLimitNotice(current: number, incoming: number): LimitNotice 
   };
 }
 
-export function messageLimitNotice(current: number, resetAt: Date): LimitNotice {
+/**
+ * `limit` is passed in rather than read from `LIMITS`, because the demo
+ * workspace has a lower cap and the dialog must name the ceiling that actually
+ * applied. A notice that says "100" to somebody who was stopped at 25 is worse
+ * than no number at all — it reads as a bug in the app rather than a limit.
+ */
+export function messageLimitNotice(
+  current: number,
+  resetAt: Date,
+  limit: number = LIMITS.messagesPerDay,
+): LimitNotice {
   return {
     key: "messagesPerDay",
     title: "Daily question limit reached",
-    message: `You have asked ${current} of ${LIMITS.messagesPerDay} questions today.`,
+    message: `You have asked ${current} of ${limit} questions today.`,
     nextStep: `The count resets at ${formatReset(resetAt)}. Reading documents and opening past answers still works.`,
-    limit: LIMITS.messagesPerDay,
+    limit,
     current,
     unit: "questions",
     resetAt: resetAt.toISOString(),

@@ -15,6 +15,7 @@ import {
 } from "@/db/schema";
 import { DELETE_CONFIRMATION } from "@/lib/account";
 import { requireUser } from "@/lib/auth-server";
+import { isDemoUser } from "@/lib/demo";
 import { env } from "@/lib/env";
 import { getVectorStore } from "@/lib/vector";
 
@@ -87,6 +88,15 @@ export async function deleteAllMyData(
   input: z.input<typeof deleteAllSchema>,
 ): Promise<ActionResult<{ summary: DeleteAllSummary }>> {
   const user = await requireUser();
+
+  // The demo's data is the demo. Erasing it is the reset script's job, and the
+  // reset script runs as an operator rather than as a visitor.
+  if (isDemoUser(user.id)) {
+    return {
+      ok: false,
+      error: "Deleting is disabled in the demo workspace.",
+    };
+  }
 
   const parsed = deleteAllSchema.safeParse(input);
   if (!parsed.success) {

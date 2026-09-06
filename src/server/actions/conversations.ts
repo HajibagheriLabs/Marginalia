@@ -13,6 +13,7 @@ import {
   requireConversationAccess,
   requireUser,
 } from "@/lib/auth-server";
+import { DEMO_SUGGESTIONS, isDemoUser } from "@/lib/demo";
 import {
   conversationHasMessages,
   loadScopeDocuments,
@@ -278,6 +279,32 @@ export async function getSuggestedQuestions(
 
   const parsed = documentIdsSchema.safeParse(documentIds);
   if (!parsed.success) return { ok: true, suggestions: [] };
+
+  /*
+   * THE DEMO GETS HAND-PICKED EXAMPLES.
+   *
+   * Everywhere else the suggestions are derived from the selected documents'
+   * own heading breadcrumbs, which is the right answer for a library nobody
+   * has seen before: it is guaranteed to have a passage behind it and it
+   * cannot be stale. The demo's library is known in advance, so its examples
+   * can be chosen to DEMONSTRATE something instead of merely to be answerable
+   * — a citation resolving to one passage, an answer pulled out of a table,
+   * and one question whose honest answer is that the corpus does not cover it.
+   *
+   * That last one is why this override exists at all. A derived suggestion is
+   * answerable by construction, so it can never show the refusal behaviour —
+   * and the refusal is the most important thing this product does and the one
+   * a demo is most tempted to hide.
+   */
+  if (isDemoUser(user.id)) {
+    return {
+      ok: true,
+      suggestions: DEMO_SUGGESTIONS.map((entry) => ({
+        question: entry.question,
+        documentId: null,
+      })),
+    };
+  }
 
   return {
     ok: true,

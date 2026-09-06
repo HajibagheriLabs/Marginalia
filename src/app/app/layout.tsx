@@ -1,8 +1,10 @@
 import { LimitProvider } from "@/components/limit-dialog";
+import { DemoBanner } from "@/components/workspace/demo-banner";
 import { LibraryRail } from "@/components/workspace/library-rail";
 import { UploadProvider } from "@/components/upload/upload-provider";
 import { UploadQueue } from "@/components/upload/upload-queue";
 import { requireUser } from "@/lib/auth-server";
+import { isDemoUser } from "@/lib/demo";
 import { listUserConversations } from "@/lib/conversations";
 import { listUserDocuments } from "@/lib/documents";
 import { readWorkspacePrefs } from "@/lib/workspace-prefs.server";
@@ -49,8 +51,15 @@ export default async function WorkspaceLayout({
             conversations={conversations}
             user={{ name: user.name ?? "", email: user.email }}
             initialCollapsed={railCollapsed}
+            uploadsDisabled={isDemoUser(user.id)}
           />
-          <main className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</main>
+          <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+            {/* Above the panes, inside the main column, so it is visible on
+                every route of the workspace and survives navigation between
+                documents — the restriction it explains does too. */}
+            {isDemoUser(user.id) ? <DemoBanner /> : null}
+            {children}
+          </main>
         </div>
         <UploadQueue />
       </UploadProvider>
