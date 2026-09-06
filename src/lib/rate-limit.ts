@@ -198,7 +198,7 @@ export interface FreePoolDecision {
 /**
  * Count one model request against OpenRouter's free ceilings, or refuse it.
  *
- * GLOBAL, not per user: the ~20/min and ~200/day quotas belong to this app's
+ * GLOBAL, not per user: the ~20/min and 50/day quotas belong to this app's
  * OpenRouter key and are spent by whoever calls it. So both counters are kept
  * on a single shared key rather than one per user, which is also why they are
  * the part of this file that suffers most from being in-memory — N instances

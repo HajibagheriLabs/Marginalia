@@ -35,6 +35,24 @@ const AUTH_ROUTES = [
 ];
 
 /**
+ * Generated metadata files, and why they need naming here.
+ *
+ * The matcher below lets static ASSETS through by extension, which covers
+ * `/icon.svg`. It does not cover these three, because they are not files on
+ * disk — Next.js generates them from `robots.ts`, `sitemap.ts`, and
+ * `opengraph-image.tsx`, and they arrive as ordinary route requests.
+ *
+ * Redirecting them is silently destructive in a way that never shows up in a
+ * browser: a crawler asking for /robots.txt gets a 307 to /sign-in and reads a
+ * page of HTML as its crawl rules, the sitemap is never fetched at all, and the
+ * social card fails to render on every service that unfurls a link. Nothing in
+ * the application misbehaves, so there is no symptom to notice.
+ *
+ * They are also, obviously, meant for anonymous callers. That is the whole job.
+ */
+const PUBLIC_METADATA = ["/robots.txt", "/sitemap.xml", "/opengraph-image"];
+
+/**
  * Reachable signed out. Everything else redirects to /sign-in.
  *
  * `/demo` is here because its whole job is to CREATE a session: bouncing a
@@ -44,7 +62,7 @@ const AUTH_ROUTES = [
  * out a session for a published password, exactly as typing that password into
  * the sign-in form would.
  */
-const PUBLIC_ROUTES = ["/", "/demo", ...AUTH_ROUTES];
+const PUBLIC_ROUTES = ["/", "/demo", ...PUBLIC_METADATA, ...AUTH_ROUTES];
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;

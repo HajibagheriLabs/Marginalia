@@ -17,9 +17,11 @@ import { env } from "@/lib/env";
  *   - MODELS DISAPPEAR. A `:free` id that worked last week returns 404 today,
  *     with no deprecation notice and no migration path. The live list is at
  *     https://openrouter.ai/models?max_price=0 and it genuinely churns.
- *   - THE QUOTA IS SHARED AND SMALL. Roughly 20 requests per minute and 200
- *     per day across the free pool, not per model and not per user. Two people
- *     using the app at once can exhaust a minute's budget.
+ *   - THE QUOTA IS SHARED AND SMALL. Roughly 20 requests per minute and — on
+ *     an account with no purchased credits, which is this one — 50 per DAY
+ *     across the whole free pool, not per model and not per user. Measured
+ *     from OpenRouter's own 429 body; see FREE_POOL in src/lib/limits.ts. Two
+ *     people using the app at once can exhaust a minute's budget.
  *   - CAPACITY IS BEST-EFFORT. 502s and 503s from an overloaded upstream are
  *     ordinary, not incidents.
  *

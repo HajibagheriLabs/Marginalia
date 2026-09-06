@@ -85,13 +85,13 @@ const serverSchema = z
     // `:free` suffix). It CHANGES — models are delisted without notice — which
     // is why there is a fallback list at all.
     OPENROUTER_API_KEY: z.string().min(1),
-    OPENROUTER_MODEL: freeModelId.default("z-ai/glm-5.2:free"),
+    OPENROUTER_MODEL: freeModelId.default("nvidia/nemotron-3.5-lightning:free"),
     // Tried in order when the primary model is delisted, rate-limited, or
     // erroring. Comma-separated in the environment; an array everywhere else.
     OPENROUTER_FALLBACK_MODELS: z
       .string()
       .default(
-        "minimax/minimax-m3:free,google/gemma-4-31b-it:free,nvidia/nemotron-3-super-120b-a12b:free",
+        "google/gemma-4-31b-it:free,nvidia/nemotron-3-super-120b-a12b:free",
       )
       .transform((value) =>
         value

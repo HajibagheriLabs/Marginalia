@@ -1,168 +1,197 @@
-import type { CSSProperties } from "react";
+import type { Metadata } from "next";
 import Link from "next/link";
 
+import { RetrievalTrace } from "@/components/conversation/retrieval-trace";
+import {
+  GroundedExhibit,
+  RefusalExhibit,
+} from "@/components/landing/exhibits";
+import { HowItWorks } from "@/components/landing/how-it-works";
+import { ProductDemo } from "@/components/landing/product-demo";
+import { FeatureSection } from "@/components/landing/section";
+import {
+  FOOTER,
+  HERO,
+  META,
+  NAV,
+  RETRIEVAL_TRACE,
+  RETRIEVAL_TRACE_NOTE,
+  SECTIONS,
+  SHOWCASE,
+} from "@/components/landing/copy";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
-import { APP_NAME, APP_TAGLINE } from "@/lib/brand";
+import { APP_NAME } from "@/lib/brand";
 
 /**
- * Placeholder home page. Its only job right now is to prove the design system
- * is wired: all three faces, both room themes, the invariant paper sheet, both
- * shadow tokens, and one highlighter ink. It gets replaced by the marketing
- * page and the workspace as those get built.
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ THE PUBLIC LANDING PAGE.                                                 │
+ * │                                                                          │
+ * │ This file is LAYOUT ONLY. Every sentence, label, and exhibit on the page │
+ * │ lives in src/components/landing/copy.ts — see the header of that file    │
+ * │ for the house style and for why the exhibits are real.                   │
+ * │                                                                          │
+ * │ THE ONE PLACE WITH A DISPLAY-SCALE HEADLINE, and it is set in PUBLIC     │
+ * │ SANS. The inversion is deliberate and is stated in the type scale: the   │
+ * │ serif belongs to documents, so it appears on this page only inside the   │
+ * │ paper sheet, where document text lives. A serif marketing headline would │
+ * │ borrow the authority of the thing the product is FOR.                    │
+ * │                                                                          │
+ * │ NO GRADIENTS, NO GLOW, NO FLOATING CARDS, NO ABSTRACT IMAGERY. The only  │
+ * │ coloured thing on this page is citrine, and every time it appears it is  │
+ * │ a citation — on the sheet as a 26% band with a full-strength underline,  │
+ * │ and on the chips that point at the sheet. Chrome is monochrome, and the  │
+ * │ two shadows are the two the system has: the sheet is lifted because it   │
+ * │ is paper lying on a table, and nothing else on this page is lifted at    │
+ * │ all.                                                                     │
+ * │                                                                          │
+ * │ A SERVER COMPONENT. The only interactive island is `ProductDemo`, plus   │
+ * │ the theme toggle and the retrieval trace's own disclosure button.        │
+ * └──────────────────────────────────────────────────────────────────────────┘
  */
 
-const inks = [
-  { name: "citrine", token: "var(--ink-citrine)" },
-  { name: "rose", token: "var(--ink-rose)" },
-  { name: "jade", token: "var(--ink-jade)" },
-  { name: "azure", token: "var(--ink-azure)" },
-] as const;
+/**
+ * Route metadata, including the Open Graph card.
+ *
+ * `metadataBase` is NOT here — it is set once in the root layout, so every
+ * route resolves relative asset URLs the same way. The `opengraph-image` route
+ * beside this file is picked up by convention and needs no reference.
+ *
+ * The title is written out rather than run through the layout's `%s · Marginalia`
+ * template: on the page whose subject IS the product, that template would read
+ * "Marginalia · Marginalia".
+ */
+export const metadata: Metadata = {
+  title: {
+    absolute: META.title,
+  },
+  description: META.description,
+  alternates: { canonical: "/" },
+  openGraph: {
+    type: "website",
+    url: "/",
+    siteName: APP_NAME,
+    title: META.title,
+    description: META.description,
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: META.title,
+    description: META.description,
+  },
+};
 
-export default function Home() {
+export default function LandingPage() {
   return (
-    <main className="mx-auto flex w-full max-w-[1200px] flex-1 flex-col gap-8 px-6 py-14">
-      <header className="flex items-start justify-between gap-6">
-        <div className="flex flex-col gap-3">
-          <p className="label">Design system check</p>
-          {/* Display type is set in the sans face — the serif belongs to
-              documents, not to marketing. */}
-          <h1 className="max-w-[16ch] text-display font-sans">{APP_NAME}</h1>
-          <p className="max-w-[52ch] text-body text-text-muted">{APP_TAGLINE}</p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <ThemeToggle />
-          {/* The PRIMARY action is the demo, not the workspace. A visitor with
-              no account who clicks "Open the workspace" gets a sign-in form;
-              one who clicks this gets four ingested documents and four
-              answered conversations. Signing in is the secondary path because
-              it is the one that asks for something first. */}
-          <Button asChild variant="outline">
-            <Link href="/app">Sign in</Link>
-          </Button>
-          <Button asChild>
-            <Link href="/demo" prefetch={false}>
-              Try the demo
-            </Link>
-          </Button>
+    <div className="flex min-h-full flex-col">
+      {/* ---- HEADER: a wordmark and two ways in ---------------------------- */}
+      <header className="border-b border-edge">
+        <div className="mx-auto flex w-full max-w-[1180px] items-center justify-between gap-4 px-5 py-4 sm:px-8">
+          <span className="text-section-title text-text">{APP_NAME}</span>
+          <nav className="flex items-center gap-2">
+            <ThemeToggle />
+            <Button asChild variant="ghost" size="sm">
+              <Link href={NAV.signIn.href}>{NAV.signIn.label}</Link>
+            </Button>
+          </nav>
         </div>
       </header>
 
-      <div className="grid flex-1 gap-6 lg:grid-cols-[minmax(0,400px)_minmax(0,1fr)]">
-        {/* ---- ROOM: a panel on the workspace surface --------------------- */}
-        <section className="flex flex-col gap-5 rounded-panel border border-edge bg-surface p-5">
-          <div className="flex flex-col gap-1">
-            <p className="label">Room</p>
-            <h2 className="text-page-title">Conversation</h2>
-          </div>
+      <main className="mx-auto flex w-full max-w-[1180px] flex-1 flex-col gap-20 px-5 pt-14 pb-20 sm:px-8 sm:pt-20 sm:gap-28">
+        {/* ---- HERO ------------------------------------------------------- */}
+        <section className="flex flex-col gap-6">
+          <h1 className="max-w-[17ch] text-display font-sans text-text">
+            {HERO.headline}
+          </h1>
 
-          <p className="text-body text-text-muted">
-            Interface text is Public Sans. Chrome is monochrome — buttons,
-            navigation, links, and tabs carry no colour at all.
+          <p className="max-w-[58ch] text-body text-text-muted sm:text-[16px] sm:leading-[1.6]">
+            {HERO.subhead}
           </p>
 
-          {/* Numbers and identifiers are always mono, always tabular. */}
-          <dl className="flex flex-col gap-2 border-t border-edge pt-4">
-            {[
-              ["Chunks retrieved", "8"],
-              ["Fused RRF score", "0.0164"],
-              ["Latency", "1,284 ms"],
-              ["Model", "z-ai/glm-5.2:free"],
-            ].map(([term, value]) => (
-              <div key={term} className="flex items-baseline justify-between gap-4">
-                <dt className="text-body-sm text-text-faint">{term}</dt>
-                <dd className="num text-mono-sm text-text">{value}</dd>
-              </div>
-            ))}
-          </dl>
-
-          {/* The four inks are the entire chromatic vocabulary. One is
-              assigned per source document, cycling in this order. */}
-          <div className="flex flex-col gap-2 border-t border-edge pt-4">
-            <p className="label">Citation chips</p>
-            <div className="flex flex-wrap gap-2">
-              {inks.map((ink, index) => (
-                <span
-                  key={ink.name}
-                  className="ink-chip px-2 py-0.5"
-                  style={{ "--ink": ink.token } as CSSProperties}
-                >
-                  {index + 1}
-                </span>
-              ))}
+          <div className="flex flex-col gap-3 pt-1">
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Monochrome, both of them. The primary is a --text fill; the
+                  secondary is an outline. Neither is coloured, because on this
+                  page colour would mean citation. */}
+              <Button asChild size="lg">
+                <Link href={HERO.primary.href} prefetch={false}>
+                  {HERO.primary.label}
+                </Link>
+              </Button>
+              <Button asChild size="lg" variant="outline">
+                <Link href={HERO.secondary.href}>{HERO.secondary.label}</Link>
+              </Button>
             </div>
+            <p className="text-body-sm text-text-faint">{HERO.note}</p>
+          </div>
+        </section>
+
+        {/* ---- THE PRODUCT, RENDERED --------------------------------------
+            The strongest thing on the page, so it gets the most room: full
+            width, its own breathing space, and nothing competing beside it. */}
+        <section className="flex flex-col gap-5">
+          <div className="flex flex-col gap-2">
+            <p className="label">{SHOWCASE.label}</p>
+            <p className="max-w-[62ch] text-body-sm text-text-muted">
+              {SHOWCASE.caption}
+            </p>
           </div>
 
-          {/* --shadow-overlay: the second and last shadow in the system. */}
-          <div className="flex flex-col gap-2 border-t border-edge pt-4">
-            <p className="label">Overlay shadow</p>
-            <div className="rounded-panel border border-edge bg-surface-raised p-3 shadow-overlay">
-              <p className="text-body-sm">
-                Popovers, dialogs, drawers, and toasts. Everything else is a 1px
-                hairline.
+          <ProductDemo />
+
+          {/* The document the sheet is showing, named in full. A page that
+              shows a contract without saying which one is showing a mock-up. */}
+          <p className="text-body-sm text-text-faint">
+            {SHOWCASE.documentTitle}
+          </p>
+        </section>
+
+        {/* ---- THREE CLAIMS, ONE HONEST VISUAL EACH ------------------------ */}
+        <div className="flex flex-col gap-20 sm:gap-28">
+          <FeatureSection {...SECTIONS.grounded}>
+            <GroundedExhibit />
+          </FeatureSection>
+
+          <FeatureSection {...SECTIONS.hybrid} reverse>
+            <div className="flex flex-col gap-2">
+              {/* The real component, with static rows and its disclosure open:
+                  a collapsed row here would show the reader nothing. */}
+              <RetrievalTrace rows={RETRIEVAL_TRACE} defaultOpen />
+              <p className="text-mono-xs leading-relaxed text-text-faint">
+                {RETRIEVAL_TRACE_NOTE}
               </p>
             </div>
-          </div>
-        </section>
+          </FeatureSection>
 
-        {/* ---- PAPER: the lit sheet on the table -------------------------- */}
-        <section className="flex flex-col gap-3">
-          <p className="label">Paper — identical in both themes</p>
+          <FeatureSection {...SECTIONS.refusal}>
+            <RefusalExhibit />
+          </FeatureSection>
+        </div>
 
-          <article className="paper-sheet relative flex-1 px-10 py-9 pr-14">
-            {/* The label style, re-tinted for paper: the `.label` utility uses
-                a room token, which has no business on the sheet. */}
-            <p className="text-[11px] leading-[1.4] font-semibold tracking-[0.07em] text-paper-text-muted uppercase">
-              Master Services Agreement
-            </p>
+        {/* ---- HOW IT WORKS ------------------------------------------------ */}
+        <HowItWorks />
+      </main>
 
-            <h2 className="paper-body mt-4 text-[19px] font-semibold">
-              7. Termination
-            </h2>
-
-            <p className="paper-body mt-3 text-paper-text">
-              Either party may terminate this Agreement for convenience upon{" "}
-              {/* One citation, inked in citrine — the only colour on the page. */}
-              <mark
-                className="ink-highlight text-paper-text"
-                style={{ "--ink": "var(--ink-citrine)" } as CSSProperties}
+      {/* ---- FOOTER -------------------------------------------------------- */}
+      <footer className="border-t border-edge">
+        <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-4 px-5 py-8 sm:flex-row sm:items-start sm:justify-between sm:px-8">
+          <p className="max-w-[58ch] text-body-sm text-text-muted">
+            {FOOTER.corpus}
+          </p>
+          <nav className="flex flex-wrap gap-x-5 gap-y-2">
+            {FOOTER.links.map((link) => (
+              <Link
+                key={link.href}
+                href={link.href}
+                prefetch={false}
+                className="focus-ring rounded-control text-body-sm text-text underline underline-offset-4 hover:text-text-muted"
               >
-                sixty (60) days prior written notice
-              </mark>{" "}
-              to the other party. Termination shall not relieve either party of
-              obligations accrued prior to the effective date of termination,
-              including any amounts then due and payable.
-            </p>
-
-            <p className="paper-body mt-4 text-paper-text-muted">
-              Document body text is Source Serif 4 at 17px, set larger than the
-              interface on purpose: this is the part you actually read.
-            </p>
-
-            {/* Page numbers are mono, like every other number. */}
-            <p className="num absolute right-6 bottom-6 text-mono-xs text-paper-text-muted">
-              p. 14
-            </p>
-
-            {/* A stand-in for the Evidence Rail: a 12px strip down the right
-                edge of the sheet, one tick per cited passage. */}
-            <div
-              aria-hidden
-              className="absolute inset-y-4 right-2 w-3 rounded-chip bg-paper-edge/60"
-            >
-              <span
-                className="absolute left-0 h-1 w-full rounded-chip"
-                style={
-                  {
-                    top: "22%",
-                    background: "var(--ink-citrine)",
-                  } as CSSProperties
-                }
-              />
-            </div>
-          </article>
-        </section>
-      </div>
-    </main>
+                {link.label}
+              </Link>
+            ))}
+          </nav>
+        </div>
+      </footer>
+    </div>
   );
 }

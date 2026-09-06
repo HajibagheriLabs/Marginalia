@@ -53,7 +53,7 @@ import { LimitError, insertUserMessageWithinLimit } from "@/lib/usage";
  *   1. A TOKEN BUCKET per user, so a loop cannot hammer the endpoint.
  *   2. THE DAILY QUESTION LIMIT, enforced by the same transaction that stores
  *      the question — see `insertUserMessageWithinLimit`.
- *   3. THE SHARED FREE-TIER MODEL QUOTA, ~20/min and ~200/day across the whole
+ *   3. THE SHARED FREE-TIER MODEL QUOTA, ~20/min and 50/day across the whole
  *      app rather than per user.
  *
  * All three refuse with a 429 carrying a `LimitNotice`, and the pane opens a

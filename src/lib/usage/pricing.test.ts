@@ -50,7 +50,7 @@ describe("completionCostCents", () => {
   it("is zero on the free pool, and that is a measurement", () => {
     expect(
       completionCostCents({
-        model: "z-ai/glm-5.2:free",
+        model: "nvidia/nemotron-3.5-lightning:free",
         promptTokens: 12_000,
         completionTokens: 800,
       }),
@@ -106,7 +106,7 @@ describe("completionCostCents", () => {
     // A missing count must not make an answer unpriceable.
     expect(
       completionCostCents({
-        model: "z-ai/glm-5.2:free",
+        model: "nvidia/nemotron-3.5-lightning:free",
         promptTokens: null,
         completionTokens: null,
       }),
@@ -116,7 +116,7 @@ describe("completionCostCents", () => {
 
 describe("formatCost", () => {
   it("qualifies a zero so it cannot be read as a rounded fraction", () => {
-    expect(formatCost(0, "z-ai/glm-5.2:free")).toBe("$0.00 · free tier");
+    expect(formatCost(0, "nvidia/nemotron-3.5-lightning:free")).toBe("$0.00 · free tier");
   });
 
   it("says so when no model was called", () => {

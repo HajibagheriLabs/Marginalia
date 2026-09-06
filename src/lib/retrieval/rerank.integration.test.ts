@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createLocalReranker, getReranker } from "./rerank";
 
@@ -26,14 +26,36 @@ import { createLocalReranker, getReranker } from "./rerank";
 const skip = process.env.SKIP_MODEL_TESTS === "1";
 
 describe("reranker configuration", () => {
-  it("is off unless explicitly enabled", () => {
-    // OFF IS THE DEFAULT, and the whole application works that way. Null rather
-    // than a no-op object, so "off" is distinguishable from "on and unhelpful".
-    if (process.env.RETRIEVAL_RERANKER === "local") {
-      expect(getReranker()).not.toBeNull();
-    } else {
-      expect(getReranker()).toBeNull();
-    }
+  /*
+   * ON IS THE DEFAULT, AND OFF HAS TO KEEP WORKING.
+   *
+   * The default was flipped once measurement justified it — recall@5 86.8% ->
+   * 92.1% and MRR 0.736 -> 0.788 over the answerable eval questions, at +2.1 s
+   * of p50 retrieval latency. What this asserts is the pair of facts that
+   * followed, because the second one is the easy one to lose: the application
+   * must still run with `RETRIEVAL_RERANKER=off`, and "off" must be NULL rather
+   * than a no-op scorer. The retrieval pipeline branches on that null — the
+   * trace hides its rerank column and assembly applies the RRF ratio floor
+   * instead of the reranker's absolute one — so a no-op object returning zeros
+   * would make "off" indistinguishable from "on, and everything scored zero".
+   */
+  it("is on by default", () => {
+    // Unset in the test environment, so this is the schema default in env.ts.
+    if (process.env.RETRIEVAL_RERANKER === "off") return;
+    expect(getReranker()).not.toBeNull();
+  });
+
+  it("is null, not a no-op, when switched off", () => {
+    vi.stubEnv("RETRIEVAL_RERANKER", "off");
+    vi.resetModules();
+
+    // Re-imported so env.ts re-parses with the stubbed value: it validates once
+    // at module load, which is the whole point of parsing at boot.
+    return import("./rerank").then(({ getReranker: reload }) => {
+      expect(reload()).toBeNull();
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    });
   });
 });
 

@@ -34,8 +34,23 @@ import { cn } from "@/lib/utils";
  * are different facts about a passage, and the second one is often the answer
  * to why something ranked where it did.
  */
-export function RetrievalTrace({ rows }: { rows: UITraceRow[] }) {
-  const [open, setOpen] = useState(false);
+export function RetrievalTrace({
+  rows,
+  /**
+   * Start expanded.
+   *
+   * Off in the conversation, where most answers do not need explaining and a
+   * table open under every one of them would bury the thread. On where the
+   * table IS the subject rather than an appendix to something else — the
+   * landing page renders this component with static rows to show what the
+   * ranking looks like, and a collapsed row there would show nothing at all.
+   */
+  defaultOpen = false,
+}: {
+  rows: UITraceRow[];
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   const id = useId();
 
   const used = rows.filter((row) => row.used).length;

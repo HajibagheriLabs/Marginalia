@@ -229,7 +229,13 @@ including `INGEST_SECRET`, which authenticates the pipeline's calls to itself.
 ```
 src/
   app/               routes, layout, global stylesheet
+    page.tsx         the public landing page (layout only; copy lives elsewhere)
+    icon.svg         the favicon
+    opengraph-image.tsx  the social card, drawn in the design tokens
+    robots.ts        /robots.txt
+    sitemap.ts       /sitemap.xml
   components/        application components
+    landing/         the landing page; copy.ts holds every word of it
     ui/              shadcn/ui primitives
   db/                Drizzle schema and client
   lib/

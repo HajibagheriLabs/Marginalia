@@ -19,9 +19,9 @@ import { chunks, documents } from "@/db/schema";
  * that is guaranteed to have a passage behind it.
  *
  * NO MODEL IS CALLED. Same reasoning as the conversation title: the free pool
- * is a shared ~200 requests per day, and spending three of them to rephrase
- * headings the ingester already parsed would be paying an answer's worth of
- * quota for placeholder text.
+ * is a shared 50 requests per day (see FREE_POOL in src/lib/limits.ts), and
+ * spending three of them to rephrase headings the ingester already parsed would
+ * be paying an answer's worth of quota for placeholder text.
  */
 
 /** Three is the specified count; the query asks for more so it can filter. */

@@ -10,8 +10,8 @@
  *
  * The obvious implementation asks a model to summarise the question in five
  * words. This does not, for the same reason `noContextAnswer` does not: the
- * OpenRouter free pool is roughly 200 requests per DAY shared across every user
- * of the deployment, and a title is not worth one of them. Starting three
+ * OpenRouter free pool is 50 requests per DAY shared across every user of the
+ * deployment, and a title is not worth one of them. Starting three
  * conversations would spend three answers' worth of quota on decoration.
  *
  * A model would also be strictly worse here in two ways that matter. It is a

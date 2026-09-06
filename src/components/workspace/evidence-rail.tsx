@@ -137,12 +137,21 @@ export function EvidenceRail({
                     aria-current={mark.id === activeMarkId ? "true" : undefined}
                     style={{ background: inkVar(mark.ink) } as CSSProperties}
                     className={cn(
-                      "animate-mark-in block w-auto rounded-chip",
+                      // `w-full`, NOT `w-auto`. A <button> sizes to fit its
+                      // content even at `display: block` — that is form-control
+                      // sizing, not block sizing — and these buttons are empty,
+                      // so `width: auto` collapses every mark to ZERO PIXELS and
+                      // the rail renders an empty track. Nothing errors and the
+                      // list semantics still work, so it is invisible in every
+                      // way except the one that matters.
+                      "animate-mark-in block w-full rounded-chip",
                       // The active mark is thicker and reaches past the strip,
                       // so the one you just clicked is findable without colour
-                      // having to carry two meanings at once.
+                      // having to carry two meanings at once. The width has to
+                      // grow with the negative margin, or the mark shifts left
+                      // instead of widening.
                       mark.id === activeMarkId
-                        ? "-mx-1 h-1.5 opacity-100"
+                        ? "-mx-1 h-1.5 w-[calc(100%+0.5rem)] opacity-100"
                         : mark.answerAge === 0
                           ? "h-0.5 opacity-100"
                           : "h-0.5 opacity-40",

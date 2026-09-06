@@ -67,15 +67,10 @@ export const LOCAL_PRICE: ModelPrice = {
  * table is priced by `FREE_SUFFIX_PRICE` below rather than guessed at.
  */
 export const MODEL_PRICES: Record<string, ModelPrice> = {
-  "z-ai/glm-5.2:free": {
+  "nvidia/nemotron-3.5-lightning:free": {
     promptPerMillionUsd: 0,
     completionPerMillionUsd: 0,
-    note: "free variant",
-  },
-  "minimax/minimax-m3:free": {
-    promptPerMillionUsd: 0,
-    completionPerMillionUsd: 0,
-    note: "free variant",
+    note: "free variant; the configured primary",
   },
   "google/gemma-4-31b-it:free": {
     promptPerMillionUsd: 0,

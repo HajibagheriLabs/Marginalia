@@ -146,7 +146,7 @@ export async function* answer(
    * this WITHOUT calling a model is not an optimisation:
    *
    *   - The answer is already known. Asking a model to say "I don't know"
-   *     given an empty context spends a request from a shared 200/day quota
+   *     given an empty context spends a request from a shared 50/day quota
    *     to produce a sentence written in prompt.ts.
    *   - It cannot go wrong. A model handed no passages sometimes answers from
    *     its own knowledge anyway, and that answer would be ungrounded,
@@ -216,7 +216,7 @@ export async function* answer(
      *
      * Counted here rather than once per question because failover makes more
      * than one request: a delisted primary followed by a working fallback is
-     * TWO calls against OpenRouter's ~20/min and ~200/day, and counting the
+     * TWO calls against OpenRouter's ~20/min and 50/day, and counting the
      * question would under-report by exactly the amount that matters on a bad
      * day. The route pre-checks the same counters before it starts the stream,
      * which is where a user gets the dialog; this is where the number stays

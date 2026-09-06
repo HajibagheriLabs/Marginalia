@@ -51,27 +51,30 @@ describe("`:free` enforcement at boot", () => {
     // The fallback list is the easier place for a paid id to hide: it is
     // rarely exercised, so a mistake there would only bill on the day the
     // primary model was rate-limited.
-    vi.stubEnv("OPENROUTER_MODEL", "z-ai/glm-5.2:free");
+    vi.stubEnv("OPENROUTER_MODEL", "nvidia/nemotron-3.5-lightning:free");
     vi.stubEnv(
       "OPENROUTER_FALLBACK_MODELS",
-      "minimax/minimax-m3:free,openai/gpt-4o",
+      "google/gemma-4-31b-it:free,openai/gpt-4o",
     );
 
     await expect(import("@/lib/env")).rejects.toThrow(/:free/);
   });
 
   it("loads with an all-free pool, and dedupes it", async () => {
-    vi.stubEnv("OPENROUTER_MODEL", "z-ai/glm-5.2:free");
+    vi.stubEnv("OPENROUTER_MODEL", "nvidia/nemotron-3.5-lightning:free");
     // The primary repeated in the fallbacks: re-asking a model that just
     // returned 429 wastes a whole attempt, since a rate limit does not clear
     // inside one request.
     vi.stubEnv(
       "OPENROUTER_FALLBACK_MODELS",
-      "z-ai/glm-5.2:free,minimax/minimax-m3:free",
+      "nvidia/nemotron-3.5-lightning:free,google/gemma-4-31b-it:free",
     );
 
     const { modelPool } = await import("./models");
-    expect(modelPool()).toEqual(["z-ai/glm-5.2:free", "minimax/minimax-m3:free"]);
+    expect(modelPool()).toEqual([
+      "nvidia/nemotron-3.5-lightning:free",
+      "google/gemma-4-31b-it:free",
+    ]);
   });
 });
 
