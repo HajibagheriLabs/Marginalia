@@ -303,6 +303,38 @@
     padding-block: 1px;
   }
 
+  /* THE SAME HIGHLIGHT, PAINTED AS AN OVERLAY.
+     ------------------------------------------------------------------------
+     `.ink-highlight` styles an inline <mark> around words we control. On a PDF
+     the words belong to PDF.js's text layer, whose innerHTML is already owned
+     by the search highlighter — so a citation is drawn as absolutely
+     positioned bands over the page instead, one per line of the passage. Same
+     26% band, same 2px full-strength underline, same meaning; the only
+     difference is what holds it. See citation-overlay.tsx. */
+  .citation-band {
+    background-color: color-mix(in oklch, var(--ink) 26%, transparent);
+    box-shadow: inset 0 -2px 0 0 var(--ink);
+  }
+
+  /* The rest of the citations in the answer you are reading.
+     Quieter — a 12% wash and NO underline — because the underline is what
+     makes a band read as "this one". Every passage the answer rests on stays
+     visible; exactly one of them is the one you clicked. */
+  .citation-band-context {
+    background-color: color-mix(in oklch, var(--ink) 12%, transparent);
+  }
+
+  /* THE FALLBACK, AND IT LOOKS LIKE A FALLBACK.
+     Drawn when the quoted passage could not be found on the page it claims to
+     be on. It covers the WHOLE page at 7% with a 2px rule down the left edge,
+     so it can never be mistaken for a highlight over specific words. Marking
+     the wrong sentence would be the interface asserting a provenance it does
+     not have; marking the page and saying so is the honest version. */
+  .citation-page-mark {
+    background-color: color-mix(in oklch, var(--ink) 7%, transparent);
+    box-shadow: inset 2px 0 0 0 var(--ink);
+  }
+
   /* A SEARCH MATCH — and the reason it is grey.
      ------------------------------------------------------------------------
      Search results are not evidence. A reader scanning for the word "notice"

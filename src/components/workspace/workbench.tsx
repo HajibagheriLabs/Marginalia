@@ -3,6 +3,12 @@
 import { useCallback, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 
+import { Button } from "@/components/ui/button";
+import {
+  CitationBridgeProvider,
+  useBridgeState,
+} from "@/components/viewer/citation-bridge";
+import { inkVar } from "@/lib/ink";
 import {
   CONVERSATION_MAX_WIDTH,
   CONVERSATION_MIN_WIDTH,
@@ -28,19 +34,58 @@ type Tab = "document" | "chat";
  *
  * The width is a CSS custom property, not an inline `width`, so it can be
  * applied at `lg` and above only — the pane is full width when it is a tab.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * IT OWNS THE CITATION BRIDGE
+ *
+ * Clicking a chip in the conversation has to move the reading pane, and those
+ * two are siblings here with a draggable separator between them. The bridge is
+ * provided at this level because this is the lowest node that contains both —
+ * and because below 1024px the workbench is also the thing that has to switch
+ * TABS when a citation is activated.
  */
-export function Workbench({
+export function Workbench(props: {
+  reading: React.ReactNode;
+  conversation: React.ReactNode;
+  /** Read from a cookie on the server, so the first paint is already correct. */
+  initialConversationWidth: number;
+}) {
+  return (
+    <CitationBridgeProvider>
+      <WorkbenchPanes {...props} />
+    </CitationBridgeProvider>
+  );
+}
+
+function WorkbenchPanes({
   reading,
   conversation,
   initialConversationWidth,
 }: {
   reading: React.ReactNode;
   conversation: React.ReactNode;
-  /** Read from a cookie on the server, so the first paint is already correct. */
   initialConversationWidth: number;
 }) {
-  const [tab, setTab] = useState<Tab>("document");
   const [width, setWidth] = useState(initialConversationWidth);
+
+  /* ── WHICH TAB, BELOW 1024px ──────────────────────────────────────────────
+   * Two things choose the tab: the reader tapping one, and a citation being
+   * activated. Rather than having the second push into the first from an
+   * effect — a cascading render on every click — each records WHEN it last
+   * spoke, and the later one wins. `tabNonce` comes from the bridge and
+   * increments on every activation.
+   */
+  const { active, marks, inks, tabNonce } = useBridgeState();
+  const [manualTab, setManualTab] = useState<{ tab: Tab; nonce: number }>({
+    tab: "document",
+    nonce: 0,
+  });
+  const tab: Tab = manualTab.nonce >= tabNonce ? manualTab.tab : "document";
+  const chooseTab = (next: Tab) => setManualTab({ tab: next, nonce: tabNonce });
+
+  const activeMark = active
+    ? (marks.find((mark) => mark.id === active.markId) ?? null)
+    : null;
 
   // The pointer handlers need the current width without re-subscribing.
   const widthRef = useRef(width);
@@ -149,22 +194,54 @@ export function Workbench({
         </aside>
       </div>
 
-      {/* Below 1024px: the persistent bottom bar. The active citation will live
-          here next to the tabs, which is why it is a bar and not just a pair of
-          buttons. */}
+      {/* Below 1024px: the persistent bottom bar. This is why it is a bar and
+          not just a pair of buttons — when a citation sends the reader to the
+          page, the QUESTION it answered comes with them. Without it, tapping a
+          chip drops you into the middle of a contract with no memory of what
+          you were asking, and the way back is a guess. */}
       <nav
         aria-label="Panes"
-        className="flex shrink-0 items-center gap-1 border-t border-edge bg-surface p-1.5 lg:hidden"
+        className="flex shrink-0 flex-col gap-1.5 border-t border-edge bg-surface p-1.5 lg:hidden"
       >
-        <TabButton
-          active={tab === "document"}
-          onClick={() => setTab("document")}
-        >
-          Document
-        </TabButton>
-        <TabButton active={tab === "chat"} onClick={() => setTab("chat")}>
-          Chat
-        </TabButton>
+        {activeMark ? (
+          <div className="flex items-center gap-2 px-1 pt-0.5">
+            <span
+              aria-hidden
+              className="size-2 shrink-0 rounded-chip"
+              style={{
+                background: inkVar(inks[activeMark.documentId] ?? "citrine"),
+              }}
+            />
+            <p className="min-w-0 flex-1 truncate text-body-sm text-text-muted">
+              {activeMark.question}
+            </p>
+            <Button
+              size="xs"
+              variant="secondary"
+              className="shrink-0"
+              onClick={() => {
+                // Back to the thread, and the highlight stays lit on the page
+                // behind it — returning to the conversation is not undoing the
+                // citation.
+                chooseTab("chat");
+              }}
+            >
+              Back to chat
+            </Button>
+          </div>
+        ) : null}
+
+        <div className="flex items-center gap-1">
+          <TabButton
+            active={tab === "document"}
+            onClick={() => chooseTab("document")}
+          >
+            Document
+          </TabButton>
+          <TabButton active={tab === "chat"} onClick={() => chooseTab("chat")}>
+            Chat
+          </TabButton>
+        </div>
       </nav>
     </div>
   );

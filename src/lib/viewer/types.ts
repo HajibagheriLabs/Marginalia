@@ -51,6 +51,9 @@ export interface DocumentView {
   documentId: string;
   title: string;
   filename: string;
+  /** The header's readout, and what decides `kind`. */
+  mimeType: string;
+  byteSize: number;
   kind: ViewerKind;
   boundaries: PageBoundaries;
   /** The original file. Null for `text` documents, which render from Postgres. */

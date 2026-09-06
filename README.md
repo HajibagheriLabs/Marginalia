@@ -9,8 +9,8 @@ If the documents don't answer the question, the app says so and suggests what to
 That is a correct answer, not a failure.
 
 > **Status: end to end.** Auth, upload, the four-stage ingestion pipeline, hybrid retrieval, the
-> grounded answer engine, the conversation pane, and the document viewer are built and wired
-> together. Clicking a citation to scroll and highlight the passage on the page is the next step.
+> grounded answer engine, the conversation pane, the document viewer, and click-to-source are built
+> and wired together. Clicking a citation opens its document, scrolls to the passage, and inks it.
 
 ## How it works
 
@@ -39,8 +39,9 @@ their chunks.
 
 **The Evidence Rail.** A 12px strip down the right edge of the document — a minimap of the whole file,
 not the viewport. Every passage cited in the conversation leaves a tick mark in its source document's
-ink colour. Marks from the current answer are full opacity; older ones fade. The document becomes a
-record of the conversation.
+ink colour, positioned by the same offset table the viewport indicator uses. Marks from the current
+answer are full opacity; older ones fade. Hovering one shows the passage and the question it answered;
+clicking scrolls there and re-lights it. The document becomes a record of the conversation.
 
 **The retrieval trace.** Under every answer, a collapsed row expands into a table: each passage, its
 page, its dense rank and score, its lexical rank and score, the fused RRF score, the rerank score, and

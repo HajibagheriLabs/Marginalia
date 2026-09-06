@@ -32,6 +32,7 @@ export function PdfPage({
   matcher,
   currentMatchIndex,
   onMeasure,
+  onTextLayerReady,
 }: {
   page: ViewerPage;
   index: number;
@@ -40,6 +41,13 @@ export function PdfPage({
   matcher: RegExp | null;
   currentMatchIndex: number | null;
   onMeasure: (index: number, height: number) => void;
+  /**
+   * The text layer is inserted after the canvas rasterises, so it is the
+   * moment a citation on this page becomes findable. Announcing it is what
+   * lets the highlighter re-resolve exactly when there is new text to look at,
+   * rather than polling for it.
+   */
+  onTextLayerReady: () => void;
 }) {
   /**
    * Paint search matches into the text layer.
@@ -137,6 +145,7 @@ export function PdfPage({
           </div>
         }
         onRenderSuccess={(rendered) => onMeasure(index, rendered.height)}
+        onRenderTextLayerSuccess={onTextLayerReady}
       />
     </div>
   );

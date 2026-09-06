@@ -3,6 +3,11 @@
 import { useMemo } from "react";
 
 import { CitationChipWithPreview } from "@/components/citation-chip";
+import {
+  markId,
+  useBridgeState,
+  useCitationBridge,
+} from "@/components/viewer/citation-bridge";
 import { AnswerMarkdown } from "@/components/conversation/answer-markdown";
 import { AnswerMeta } from "@/components/conversation/answer-meta";
 import { RetrievalTrace } from "@/components/conversation/retrieval-trace";
@@ -92,6 +97,12 @@ function AssistantMessage({
   inkFor: (documentId: string) => InkName;
   streaming: boolean;
 }) {
+  // The chip is the trigger for the whole click-to-source interaction, and the
+  // pane it drives is on the other side of the workbench — below 1024px, in
+  // the other tab. The bridge is what reaches it. See citation-bridge.tsx.
+  const bridge = useCitationBridge();
+  const { active } = useBridgeState();
+
   const text = messageText(message);
   const citationPart = messageCitations(message);
   const tracePart = messageTrace(message);
@@ -130,6 +141,8 @@ function AssistantMessage({
             return <span className="num text-text-muted">[{marker}]</span>;
           }
 
+          const id = markId(message.id, marker);
+
           return (
             <CitationChipWithPreview
               marker={marker}
@@ -138,6 +151,12 @@ function AssistantMessage({
               pageFrom={citation.pageFrom}
               pageTo={citation.pageTo}
               quotedText={citation.quotedText}
+              // Clicking the same chip twice re-activates it rather than doing
+              // nothing: the nonce changes, so the page scrolls back and the
+              // wipe replays. A citation you have lost track of is exactly the
+              // one you click again.
+              onClick={() => bridge.activate(id)}
+              active={active?.markId === id}
             />
           );
         }}

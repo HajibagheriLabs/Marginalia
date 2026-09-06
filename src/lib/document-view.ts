@@ -101,6 +101,8 @@ export async function loadDocumentView(
     documentId: document.id,
     title: document.title,
     filename: document.filename,
+    mimeType: document.mimeType,
+    byteSize: document.byteSize,
     kind,
     boundaries: boundariesFor(document.mimeType),
     fileUrl: kind === "pdf" ? document.blobUrl : null,

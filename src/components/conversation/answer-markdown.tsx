@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useMemo, type ReactNode } from "react";
 
 import {
   parseMarkdown,
@@ -43,9 +43,15 @@ export function AnswerMarkdown({
   renderMarker: (marker: number) => ReactNode;
   className?: string;
 }) {
+  // Parsed once per answer rather than once per render. Activating a citation
+  // re-renders every message in the thread so the clicked chip can light up,
+  // and re-parsing forty answers to move one highlight would be the wrong kind
+  // of expensive.
+  const blocks = useMemo(() => parseMarkdown(text), [text]);
+
   return (
     <div className={cn("flex flex-col gap-3", className)}>
-      {parseMarkdown(text).map((block, index) => (
+      {blocks.map((block, index) => (
         <BlockView key={index} block={block} renderMarker={renderMarker} />
       ))}
     </div>

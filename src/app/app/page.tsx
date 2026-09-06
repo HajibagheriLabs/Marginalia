@@ -8,6 +8,7 @@ import {
   UploadHint,
 } from "@/components/upload/upload-dropzone";
 import { ConversationPane } from "@/components/workspace/conversation-pane";
+import { DocumentReader } from "@/components/workspace/document-reader";
 import { Workbench } from "@/components/workspace/workbench";
 import { requireUser } from "@/lib/auth-server";
 import { listUserDocuments } from "@/lib/documents";
@@ -41,22 +42,30 @@ export default async function WorkspacePage() {
     <Workbench
       initialConversationWidth={conversationWidth}
       reading={
-        <UploadDropzone>
-          <div className="flex min-h-0 flex-1 items-center justify-center bg-room p-6">
-            <div className="flex flex-col items-center gap-3">
-              <EmptyState
-                icon={FileText}
-                title={
-                  empty
-                    ? "Drop a document here, or upload one, to start asking questions about it."
-                    : "Open a document from the library to read it here."
-                }
-                action={<UploadButton />}
-              />
-              <UploadHint />
-            </div>
-          </div>
-        </UploadDropzone>
+        // Nothing is open here, but the reader still mounts: a conversation
+        // can be started from this screen, and the citation it produces has to
+        // be able to open its source without a navigation.
+        <DocumentReader
+          initialView={null}
+          fallback={
+            <UploadDropzone>
+              <div className="flex min-h-0 flex-1 items-center justify-center bg-room p-6">
+                <div className="flex flex-col items-center gap-3">
+                  <EmptyState
+                    icon={FileText}
+                    title={
+                      empty
+                        ? "Drop a document here, or upload one, to start asking questions about it."
+                        : "Open a document from the library to read it here."
+                    }
+                    action={<UploadButton />}
+                  />
+                  <UploadHint />
+                </div>
+              </div>
+            </UploadDropzone>
+          }
+        />
       }
       conversation={
         <ConversationPane

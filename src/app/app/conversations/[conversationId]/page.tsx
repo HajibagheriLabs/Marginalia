@@ -3,6 +3,7 @@ import { FileText } from "lucide-react";
 
 import { EmptyState } from "@/components/empty-state";
 import { ConversationPane } from "@/components/workspace/conversation-pane";
+import { DocumentReader } from "@/components/workspace/document-reader";
 import { ReadingPane } from "@/components/workspace/reading-pane";
 import { Workbench } from "@/components/workspace/workbench";
 import {
@@ -58,16 +59,24 @@ export default async function ConversationPage({
         open ? (
           <ReadingPane document={open} />
         ) : (
-          <div className="flex min-h-0 flex-1 items-center justify-center bg-room p-6">
-            <EmptyState
-              icon={FileText}
-              title={
-                scope.length === 0
-                  ? "This conversation has no documents selected. Add one above the composer to give it something to search."
-                  : "The documents in this conversation are not ready to read yet."
-              }
-            />
-          </div>
+          // No readable document yet — but a citation from an earlier answer
+          // can still name one, so the reader mounts over the empty state
+          // rather than instead of it.
+          <DocumentReader
+            initialView={null}
+            fallback={
+              <div className="flex min-h-0 flex-1 items-center justify-center bg-room p-6">
+                <EmptyState
+                  icon={FileText}
+                  title={
+                    scope.length === 0
+                      ? "This conversation has no documents selected. Add one above the composer to give it something to search."
+                      : "The documents in this conversation are not ready to read yet."
+                  }
+                />
+              </div>
+            }
+          />
         )
       }
       conversation={

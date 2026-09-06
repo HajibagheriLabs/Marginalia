@@ -58,6 +58,7 @@ export function PdfStack({
   currentMatchIndex,
   pageLabel,
   onMeasure,
+  onTextLayerReady,
   onSizes,
   onError,
   loading,
@@ -76,6 +77,8 @@ export function PdfStack({
   /** "Page" or "Block" — the viewer decides once, from the boundary kind. */
   pageLabel: string;
   onMeasure: (index: number, height: number) => void;
+  /** Announced per page, when its text layer lands. See `PdfPage`. */
+  onTextLayerReady: () => void;
   onSizes: (sizes: PdfPageSize[]) => void;
   onError: (error: Error) => void;
   loading: React.ReactNode;
@@ -178,6 +181,7 @@ export function PdfStack({
                 matcher={matcher}
                 currentMatchIndex={currentMatchIndex}
                 onMeasure={onMeasure}
+                onTextLayerReady={onTextLayerReady}
               />
             </div>
           );

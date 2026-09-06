@@ -14,6 +14,11 @@ import { MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 
 import { Composer } from "@/components/composer";
+import {
+  markId,
+  useCitationBridge,
+  type CitationMark,
+} from "@/components/viewer/citation-bridge";
 import { ErrorState } from "@/components/error-state";
 import { MessageView } from "@/components/conversation/message-view";
 import { ScopeSelector } from "@/components/conversation/scope-selector";
@@ -22,6 +27,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import type { DocumentStatus } from "@/db/schema";
 import {
   messageCitations,
+  messageText,
   type MarginaliaUIMessage,
   type ScopeDocument,
 } from "@/lib/chat/types";
@@ -152,6 +158,72 @@ export function ConversationPane({
     (documentId: string): InkName => inks.get(documentId) ?? "citrine",
     [inks],
   );
+
+  /* ── PUBLISHING THE EVIDENCE ──────────────────────────────────────────────
+   * Every citation in the thread, flattened, each carrying the question its
+   * answer was given to and how old that answer is. This is the only place
+   * that knows all three facts, which is why the conversation publishes and
+   * the reading pane subscribes rather than the other way round.
+   *
+   * `answerAge` counts back from the newest ANSWER, not the newest message: a
+   * scope note or an unanswered question in between must not make this
+   * conversation's most recent evidence look old on the rail.
+   */
+  const marks = useMemo<CitationMark[]>(() => {
+    const answers: { messageId: string; question: string; citations: CitationMark[] }[] = [];
+    let question = "";
+
+    for (const message of chat.messages) {
+      if (message.role === "user") {
+        question = messageText(message);
+        continue;
+      }
+      if (message.role !== "assistant") continue;
+
+      const citations = messageCitations(message)?.citations ?? [];
+      if (citations.length === 0) continue;
+
+      answers.push({
+        messageId: message.id,
+        question,
+        citations: citations.map((citation) => ({
+          id: markId(message.id, citation.marker),
+          messageId: message.id,
+          marker: citation.marker,
+          documentId: citation.documentId,
+          documentTitle: citation.documentTitle,
+          pageFrom: citation.pageFrom,
+          pageTo: citation.pageTo,
+          quotedText: citation.quotedText,
+          question,
+          answerAge: 0,
+        })),
+      });
+    }
+
+    const newest = answers.length - 1;
+    return answers.flatMap((answer, index) =>
+      answer.citations.map((citation) => ({
+        ...citation,
+        answerAge: newest - index,
+      })),
+    );
+  }, [chat.messages]);
+
+  /** The ink map as a plain object, which is what the bridge carries. */
+  const inkRecord = useMemo(
+    () => Object.fromEntries(inks) as Record<string, InkName>,
+    [inks],
+  );
+
+  const bridge = useCitationBridge();
+  useEffect(() => {
+    // Writing to an external store, which is what an effect is for. Both
+    // arguments are memoised and the bridge compares them by reference, so a
+    // render that changed nothing notifies nobody — this stays cheap while an
+    // answer is streaming a token at a time.
+    bridge.setConversation({ marks, inks: inkRecord });
+  }, [bridge, marks, inkRecord]);
 
   /* ── EXAMPLE QUESTIONS ────────────────────────────────────────────────────
    * Derived from the documents that are ACTUALLY selected, so they change with

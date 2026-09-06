@@ -10,6 +10,14 @@ import {
 import dynamic from "next/dynamic";
 
 import { PaperSheet } from "@/components/paper-sheet";
+import {
+  useBridgeState,
+  useCitationBridge,
+} from "@/components/viewer/citation-bridge";
+import {
+  CitationOverlay,
+  useCitationBands,
+} from "@/components/viewer/citation-overlay";
 import { PageDivider } from "@/components/viewer/page-divider";
 import { PageSkeleton } from "@/components/viewer/page-skeleton";
 import { TextPage } from "@/components/viewer/text-pages";
@@ -21,7 +29,8 @@ import {
 } from "@/components/viewer/viewer-toolbar";
 import { ErrorState } from "@/components/error-state";
 import { Button } from "@/components/ui/button";
-import { EvidenceRail } from "@/components/workspace/evidence-rail";
+import { EvidenceRail, type EvidenceMark } from "@/components/workspace/evidence-rail";
+import { inkVar, type InkName } from "@/lib/ink";
 import {
   compileQuery,
   searchPages,
@@ -107,11 +116,22 @@ export function DocumentViewer({ view }: { view: DocumentView }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stackRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
 
   const [zoom, setZoom] = useState<ZoomSetting>("fit");
   const [availableWidth, setAvailableWidth] = useState(0);
   const [pdfSizes, setPdfSizes] = useState<PdfPageSize[] | null>(null);
   const [loadError, setLoadError] = useState<Error | null>(null);
+  /**
+   * "The DOM under the highlighter changed."
+   *
+   * Bumped when a PDF text layer lands — the moment a page that was a blank
+   * canvas acquires words a citation can be found in — and when the pane
+   * itself is resized, which includes going from hidden to visible as the
+   * mobile tabs switch. Both move bands, and neither is something the browser
+   * announces.
+   */
+  const [domVersion, setDomVersion] = useState(0);
 
   const isPdf = view.kind === "pdf";
 
@@ -153,6 +173,29 @@ export function DocumentViewer({ view }: { view: DocumentView }) {
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
+
+  const bumpDomVersion = useCallback(
+    () => setDomVersion((version) => version + 1),
+    [],
+  );
+
+  /**
+   * Re-resolve highlights when the pane's size changes.
+   *
+   * The case this exists for is the mobile tab switch. Below 1024px the
+   * reading pane is hidden with a class while the conversation is on screen,
+   * and a hidden element measures zero — so a citation activated from the chat
+   * tab would resolve against a collapsed page. The observer fires as the pane
+   * comes back, which is the signal to measure again.
+   */
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+
+    const observer = new ResizeObserver(bumpDomVersion);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [bumpDomVersion]);
 
   /* ── VIRTUALISATION ─────────────────────────────────────────────────────── */
 
@@ -377,6 +420,154 @@ export function DocumentViewer({ view }: { view: DocumentView }) {
   /* ── RENDER ─────────────────────────────────────────────────────────────── */
 
   const visible = view.pages.slice(virtual.range.start, virtual.range.end);
+  /* ── CITATIONS ────────────────────────────────────────────────────────────
+   * Everything here is read from the bridge rather than passed down: the
+   * chips that drive it live in the other pane, and below 1024px in the other
+   * TAB. See citation-bridge.tsx.
+   */
+  const bridge = useCitationBridge();
+  const { marks, inks, active } = useBridgeState();
+
+  const inkFor = useCallback(
+    (documentId: string): InkName => inks[documentId] ?? "citrine",
+    [inks],
+  );
+
+  /** This document's citations, and how many are sitting in the others. */
+  const documentMarks = useMemo(
+    () => marks.filter((mark) => mark.documentId === view.documentId),
+    [marks, view.documentId],
+  );
+  const otherDocumentCount = marks.length - documentMarks.length;
+
+  const activeMark = useMemo(
+    () =>
+      active
+        ? (documentMarks.find((mark) => mark.id === active.markId) ?? null)
+        : null,
+    [active, documentMarks],
+  );
+  const activeNonce = active?.nonce ?? 0;
+
+  /**
+   * What to paint: the citation that was clicked, plus every other citation
+   * from THE SAME ANSWER that lands in this document.
+   *
+   * The spec's "a subtler version of all citations for the current answer
+   * stays visible" is the whole reason an answer reads as one piece of
+   * evidence rather than a list of unrelated jumps — you can see the shape of
+   * what the answer rested on while looking at one part of it.
+   */
+  const paintRequests = useMemo(() => {
+    if (!activeMark) return [];
+    const ink = inkFor(activeMark.documentId);
+    const siblings = documentMarks.filter(
+      (mark) =>
+        mark.messageId === activeMark.messageId && mark.id !== activeMark.id,
+    );
+
+    return [
+      ...siblings.map((mark) => ({
+        mark,
+        ink: inkFor(mark.documentId),
+        role: "context" as const,
+      })),
+      // Last, so the active band paints over any sibling it overlaps.
+      { mark: activeMark, ink, role: "active" as const },
+    ];
+  }, [activeMark, documentMarks, inkFor]);
+
+  const painted = useCitationBands({
+    overlayRef,
+    rootRef: scrollRef,
+    requests: paintRequests,
+    // Which pages are mounted, whether their text has arrived, and the zoom.
+    renderVersion: `${virtual.range.start}-${virtual.range.end}-${domVersion}-${scale}`,
+  });
+
+  /* ── SCROLLING TO A CITATION ──────────────────────────────────────────────
+   * Two steps, because a citation on page 200 has no DOM until the virtualiser
+   * has been told to render page 200:
+   *
+   *   1. scroll to the PAGE the moment a citation is activated;
+   *   2. once the passage has resolved to bands, scroll to the BAND.
+   *
+   * Both are keyed on the activation nonce rather than on the mark, so
+   * re-clicking the same chip scrolls again and the reader is never left
+   * wondering whether the click registered — and so neither step fires again
+   * while they scroll away from a highlight that is still lit.
+   */
+  const scrolledToPage = useRef(0);
+  useEffect(() => {
+    if (!activeMark || activeNonce === scrolledToPage.current) return;
+    scrolledToPage.current = activeNonce;
+    virtual.scrollToPage(activeMark.pageFrom);
+  }, [activeMark, activeNonce, virtual]);
+
+  const scrolledToBand = useRef(0);
+  useEffect(() => {
+    if (!activeMark || activeNonce === scrolledToBand.current) return;
+
+    const band = painted.find((item) => item.role === "active")?.bands[0];
+    const scrollElement = scrollRef.current;
+    const overlay = overlayRef.current;
+    if (!band || !scrollElement || !overlay) return;
+
+    scrolledToBand.current = activeNonce;
+
+    // A third of the way down, not centred: a cited passage is usually the
+    // start of something, and the reader wants what follows it on screen.
+    const overlayTop =
+      overlay.getBoundingClientRect().top -
+      scrollElement.getBoundingClientRect().top;
+    scrollElement.scrollTop +=
+      overlayTop + band.top - scrollElement.clientHeight * 0.3;
+  }, [activeMark, activeNonce, painted]);
+
+  /**
+   * The quiet note for the page-level fallback.
+   *
+   * Shown only for the citation the reader actually clicked. It says which
+   * page is on screen and that the exact passage was not found, because the
+   * alternative — a page-wide wash with no explanation — looks like a bug, and
+   * silence would look like a highlight that simply is not there.
+   */
+  const activePaint = painted.find((item) => item.role === "active");
+  const fallbackNote =
+    activeMark && activePaint?.kind === "page"
+      ? `Showing ${unitLabel(view.boundaries)} ${activeMark.pageFrom} — exact passage not found.`
+      : null;
+
+  /* ── THE RAIL ─────────────────────────────────────────────────────────────
+   * A mark's position is the fraction of the DOCUMENT its page starts at,
+   * taken from the virtualiser's own offset table — the same numbers the
+   * viewport indicator uses. Page number over page count would be wrong the
+   * moment a document mixes portrait and landscape pages, and it would put the
+   * indicator and the marks on two different scales.
+   */
+  const indexByPage = useMemo(() => {
+    const map = new Map<number, number>();
+    view.pages.forEach((page, index) => map.set(page.pageNumber, index));
+    return map;
+  }, [view.pages]);
+
+  const railMarks = useMemo<EvidenceMark[]>(() => {
+    if (virtual.totalHeight <= 0) return [];
+    return documentMarks.map((mark) => {
+      const index = indexByPage.get(mark.pageFrom) ?? 0;
+      return {
+        id: mark.id,
+        position: virtual.offsetOf(index) / virtual.totalHeight,
+        ink: inkFor(mark.documentId),
+        pageLabel: `${unitLabel(view.boundaries, true)} ${mark.pageFrom}`,
+        documentTitle: mark.documentTitle,
+        quotedText: mark.quotedText,
+        question: mark.question,
+        answerAge: mark.answerAge,
+      };
+    });
+  }, [documentMarks, indexByPage, inkFor, view.boundaries, virtual]);
+
   const unit = unitLabel(view.boundaries, true);
 
   return (
@@ -411,6 +602,22 @@ export function DocumentViewer({ view }: { view: DocumentView }) {
           onPrevious={previousMatch}
           onClose={closeSearch}
         />
+      ) : null}
+
+      {fallbackNote ? (
+        <div
+          role="status"
+          className="flex h-8 shrink-0 items-center gap-2 border-b border-edge bg-surface px-3 text-body-sm text-text-muted"
+        >
+          {/* The one coloured thing in the chrome, and it is a citation
+              indicator — it names which highlight this note is about. */}
+          <span
+            aria-hidden
+            className="size-2 shrink-0 rounded-chip"
+            style={{ background: inkVar(inkFor(view.documentId)) }}
+          />
+          {fallbackNote}
+        </div>
       ) : null}
 
       <div
@@ -455,11 +662,20 @@ export function DocumentViewer({ view }: { view: DocumentView }) {
               }
               rail={
                 <EvidenceRail
+                  marks={railMarks}
+                  otherDocumentCount={otherDocumentCount}
                   viewportTop={virtual.viewport.top}
                   viewportHeight={virtual.viewport.height}
+                  activeMarkId={activeMark?.id ?? null}
+                  onSelect={bridge.activate}
                 />
               }
             >
+              {/* The positioning context the highlight overlay measures
+                  against. Both renderers put their page stack in here, so a
+                  band's coordinates mean the same thing whichever one drew the
+                  page underneath it. */}
+              <div className="relative">
               {/* ALWAYS MOUNTED for a PDF. react-pdf starts the load in an
                   effect and shows `loading` until the document is parsed, so
                   gating the stack on having page sizes would be gating it on
@@ -480,6 +696,7 @@ export function DocumentViewer({ view }: { view: DocumentView }) {
                   currentMatchIndex={currentMatch}
                   pageLabel={unit}
                   onMeasure={virtual.measure}
+                  onTextLayerReady={bumpDomVersion}
                   onSizes={setPdfSizes}
                   onError={setLoadError}
                   loading={
@@ -523,6 +740,13 @@ export function DocumentViewer({ view }: { view: DocumentView }) {
                   })}
                 </div>
               )}
+
+                <CitationOverlay
+                  overlayRef={overlayRef}
+                  painted={painted}
+                  nonce={activeNonce}
+                />
+              </div>
             </PaperSheet>
           )}
         </div>

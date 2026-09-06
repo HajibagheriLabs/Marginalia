@@ -3,7 +3,8 @@
 import { z } from "zod";
 
 import { requireDocumentAccess } from "@/lib/auth-server";
-import { loadPageText } from "@/lib/document-view";
+import { loadDocumentView, loadPageText } from "@/lib/document-view";
+import type { DocumentView } from "@/lib/viewer/types";
 import {
   MAX_MATCHES,
   MIN_QUERY_LENGTH,
@@ -66,4 +67,37 @@ export async function searchDocument(
   const { matches, truncated } = searchPages(pages, parsed.data.query, MAX_MATCHES);
 
   return { ok: true, matches, truncated };
+}
+
+/**
+ * Load another document's view, without leaving the page.
+ *
+ * Clicking a citation for a document the reading pane is not showing has to
+ * switch it, and a navigation would be the wrong tool: it would tear down the
+ * conversation pane — including an answer that may still be streaming — to
+ * change what is on the other side of the separator. So the pane swaps its
+ * view in place and this is where the new one comes from.
+ *
+ * `requireDocumentAccess` is still the boundary. A citation names a document
+ * id, that id arrives over the network like any other, and it is checked here
+ * exactly as it would be on a page load.
+ */
+export async function getDocumentView(
+  documentId: string,
+): Promise<ActionResult<{ view: DocumentView }>> {
+  const parsed = z.uuid().safeParse(documentId);
+  if (!parsed.success) {
+    return { ok: false, error: "That document could not be opened." };
+  }
+
+  const { document } = await requireDocumentAccess(parsed.data);
+
+  if (document.status !== "ready") {
+    return {
+      ok: false,
+      error: `"${document.title}" is still being processed, so it cannot be opened yet.`,
+    };
+  }
+
+  return { ok: true, view: await loadDocumentView(document) };
 }
