@@ -39,7 +39,7 @@ export function UploadButton({
         tabIndex={-1}
         onChange={(event) => {
           const files = Array.from(event.target.files ?? []);
-          enqueue(files);
+          void enqueue(files);
           // Reset, so picking the same file twice in a row still fires change.
           event.target.value = "";
         }}

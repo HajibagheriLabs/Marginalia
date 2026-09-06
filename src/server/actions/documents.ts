@@ -8,8 +8,20 @@ import { z } from "zod";
 import { db } from "@/db";
 import { chunks, documentPages, documents } from "@/db/schema";
 import { requireDocumentAccess, requireUser } from "@/lib/auth-server";
-import { countUserDocuments } from "@/lib/documents";
 import { env } from "@/lib/env";
+import {
+  LIMITS,
+  documentLimitNotice,
+  pageLimitNotice,
+  type LimitNotice,
+} from "@/lib/limits";
+import {
+  LimitError,
+  countUserDocuments,
+  countUserPages,
+  insertDocumentWithinLimit,
+  recordUploadUsage,
+} from "@/lib/usage";
 import { resumeFailedDocument } from "@/lib/ingest/pipeline";
 import {
   readDocumentProgress,
@@ -19,7 +31,6 @@ import { startIngestion } from "@/lib/ingest/start";
 import { getVectorStore } from "@/lib/vector";
 import {
   ACCEPTED_CONTENT_TYPES,
-  MAX_DOCUMENTS_PER_USER,
   MAX_UPLOAD_BYTES,
   documentTitleFromFilename,
   isOwnedBlobPathname,
@@ -47,7 +58,14 @@ export type RegisterUploadInput = z.input<typeof registerSchema>;
 
 export type ActionResult<T = unknown> =
   | ({ ok: true } & T)
-  | { ok: false; error: string };
+  /**
+   * `limit` is present when the refusal was a LIMIT rather than a failure.
+   * The two are rendered differently on purpose — an error is a toast, a limit
+   * is a dialog naming the ceiling, the current usage, and the way out — so
+   * the distinction has to survive the trip to the client rather than being
+   * inferred from the wording of a string.
+   */
+  | { ok: false; error: string; limit?: LimitNotice };
 
 /**
  * Turn a completed blob upload into a `documents` row.
@@ -122,19 +140,23 @@ export async function registerUploadedDocument(
     return discard("That file is empty. There is nothing to read.");
   }
 
-  // Re-check the quota. The upload route checked it before minting a token,
-  // but two uploads started in parallel can both pass that check; this is the
-  // one that runs immediately before the row is written.
-  const used = await countUserDocuments(user.id);
-  if (used >= MAX_DOCUMENTS_PER_USER) {
-    return discard(
-      `You have ${used} documents, which is the limit of ${MAX_DOCUMENTS_PER_USER}. Delete one to upload another.`,
-    );
-  }
-
-  const [created] = await db
-    .insert(documents)
-    .values({
+  /*
+   * THE DOCUMENT LIMIT IS DECIDED HERE, and it is decided inside the same
+   * transaction as the insert.
+   *
+   * The upload route checked the count before minting a token, but that check
+   * cannot be the enforcement: two uploads started together both read the same
+   * count, both pass, and both insert. `insertDocumentWithinLimit` takes a
+   * per-user advisory lock and then counts and inserts under it, so the 26th
+   * document cannot come into existence — see src/lib/usage/guard.ts for why a
+   * plain transaction is not enough on its own.
+   *
+   * A refusal DISCARDS the blob, exactly like a failed verification. The bytes
+   * are already in the store and nothing will reference them.
+   */
+  let documentId: string;
+  try {
+    documentId = await insertDocumentWithinLimit({
       userId: user.id,
       title: documentTitleFromFilename(claim.filename),
       filename: claim.filename,
@@ -143,13 +165,21 @@ export async function registerUploadedDocument(
       byteSize: stored.size,
       blobUrl: stored.url,
       blobPathname: stored.pathname,
-      status: "uploaded",
-    })
-    .returning({ id: documents.id });
-
-  if (!created) {
+    });
+  } catch (error) {
+    if (error instanceof LimitError) {
+      const rejected = await discard(error.notice.message);
+      return { ...rejected, limit: error.notice };
+    }
+    console.error("[upload] failed to record document", error);
     return discard("That upload could not be recorded.");
   }
+
+  // Metered after the row exists, so the meter never counts an upload that was
+  // discarded. Failing to write the usage row does not fail the upload.
+  await recordUploadUsage({ userId: user.id, byteSize: stored.size });
+
+  const created = { id: documentId };
 
   // The single seam where ingestion is triggered. It schedules extraction to
   // run after this response is sent, so the upload UI is not held open while a
@@ -292,4 +322,44 @@ export async function getDocumentProgress(
   }
 
   return { ok: true, progress };
+}
+
+/**
+ * Can this account take `count` more documents right now?
+ *
+ * Called by the upload queue BEFORE it starts transferring, so a user at the
+ * ceiling gets the dialog that names it instead of watching a 25 MB upload
+ * complete and then fail. It is a courtesy, not the enforcement — see
+ * `insertDocumentWithinLimit` for the check that actually decides — and it is
+ * deliberately not transactional, because nothing is being written.
+ *
+ * It also answers the page ceiling, which the register step cannot: pages are
+ * only counted once a document has been parsed, so the only useful thing to
+ * say at upload time is whether there is any room left at all.
+ */
+export async function checkUploadAllowance(
+  count = 1,
+): Promise<ActionResult<{ documentsRemaining: number; pagesRemaining: number }>> {
+  const user = await requireUser();
+
+  const [used, pages] = await Promise.all([
+    countUserDocuments(user.id),
+    countUserPages(user.id),
+  ]);
+
+  if (used + count > LIMITS.documents) {
+    const notice = documentLimitNotice(used);
+    return { ok: false, error: notice.message, limit: notice };
+  }
+
+  if (pages >= LIMITS.totalPages) {
+    const notice = pageLimitNotice(pages, 1);
+    return { ok: false, error: notice.message, limit: notice };
+  }
+
+  return {
+    ok: true,
+    documentsRemaining: LIMITS.documents - used,
+    pagesRemaining: LIMITS.totalPages - pages,
+  };
 }

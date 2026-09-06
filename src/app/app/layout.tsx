@@ -1,3 +1,4 @@
+import { LimitProvider } from "@/components/limit-dialog";
 import { LibraryRail } from "@/components/workspace/library-rail";
 import { UploadProvider } from "@/components/upload/upload-provider";
 import { UploadQueue } from "@/components/upload/upload-queue";
@@ -21,6 +22,11 @@ import { readWorkspacePrefs } from "@/lib/workspace-prefs.server";
  * `h-dvh` with `overflow-hidden` makes the shell exactly one viewport tall and
  * gives the panes a definite height to scroll inside. The document scrolls; the
  * application does not.
+ *
+ * `LimitProvider` is here for the same reason the upload queue is: a refused
+ * upload and a spent daily allowance are both account-level facts, and both can
+ * be triggered from a pane that is about to unmount. One dialog, above
+ * everything that swaps.
  */
 export default async function WorkspaceLayout({
   children,
@@ -35,17 +41,19 @@ export default async function WorkspaceLayout({
   ]);
 
   return (
-    <UploadProvider userId={user.id}>
-      <div className="flex h-dvh min-h-0 flex-col overflow-hidden lg:flex-row">
-        <LibraryRail
-          documents={documents}
-          conversations={conversations}
-          user={{ name: user.name ?? "", email: user.email }}
-          initialCollapsed={railCollapsed}
-        />
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</main>
-      </div>
-      <UploadQueue />
-    </UploadProvider>
+    <LimitProvider>
+      <UploadProvider userId={user.id}>
+        <div className="flex h-dvh min-h-0 flex-col overflow-hidden lg:flex-row">
+          <LibraryRail
+            documents={documents}
+            conversations={conversations}
+            user={{ name: user.name ?? "", email: user.email }}
+            initialCollapsed={railCollapsed}
+          />
+          <main className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</main>
+        </div>
+        <UploadQueue />
+      </UploadProvider>
+    </LimitProvider>
   );
 }

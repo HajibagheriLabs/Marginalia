@@ -6,11 +6,18 @@ import { titleFromQuestion } from "@/lib/chat/title";
 import { toUITraceRow } from "@/lib/chat/trace";
 import type { MarginaliaUIMessage } from "@/lib/chat/types";
 import {
-  persistUserMessage,
   setConversationTitleIfUnset,
   touchConversation,
 } from "@/lib/conversations";
+import {
+  FREE_POOL,
+  freePoolNotice,
+  rateLimitNotice,
+  type LimitNotice,
+} from "@/lib/limits";
 import { answer } from "@/lib/llm";
+import { freePoolState, release, take } from "@/lib/rate-limit";
+import { LimitError, insertUserMessageWithinLimit } from "@/lib/usage";
 
 /**
  * THE CONVERSATION ENDPOINT.
@@ -39,6 +46,26 @@ import { answer } from "@/lib/llm";
  * changes go through `setConversationScope`, which re-checks ownership and
  * writes a note into the thread; there is deliberately no way to change scope
  * by sending a different array here.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * THREE CEILINGS, CHECKED BEFORE THE STREAM OPENS
+ *
+ *   1. A TOKEN BUCKET per user, so a loop cannot hammer the endpoint.
+ *   2. THE DAILY QUESTION LIMIT, enforced by the same transaction that stores
+ *      the question — see `insertUserMessageWithinLimit`.
+ *   3. THE SHARED FREE-TIER MODEL QUOTA, ~20/min and ~200/day across the whole
+ *      app rather than per user.
+ *
+ * All three refuse with a 429 carrying a `LimitNotice`, and the pane opens a
+ * dialog naming the exact ceiling and the way out. They are checked HERE, up
+ * front, rather than inside the stream, for one reason: once a
+ * `text/event-stream` response has started, the only way to report anything is
+ * an error chunk inside it, and a limit is not an error. A status code and a
+ * JSON body are what a limit is.
+ *
+ * A limit refusal RELEASES the bucket token it took. Discovering you are at a
+ * ceiling must not also spend the allowance that would let you retry once it
+ * clears.
  *
  * ───────────────────────────────────────────────────────────────────────────
  * WHY THE NODE RUNTIME
@@ -88,17 +115,57 @@ export async function POST(request: Request): Promise<Response> {
   // missing or belongs to somebody else.
   const { user, conversation } = await requireConversationAccess(conversationId);
 
+  /* ── 1. THE BUCKET ────────────────────────────────────────────────────── */
+  const rate = take("chat", user.id);
+  if (!rate.ok) {
+    return refuse(rateLimitNotice("questions", rate.resetAt));
+  }
+
+  /* ── 2. THE DAILY QUESTION LIMIT ──────────────────────────────────────── */
   if (trigger === "submit-message") {
-    await persistUserMessage({
-      conversationId: conversation.id,
-      content: question,
-    });
+    try {
+      // Counts and inserts in ONE transaction under a per-user advisory lock,
+      // so two questions sent together cannot both pass the hundredth check.
+      await insertUserMessageWithinLimit({
+        userId: user.id,
+        conversationId: conversation.id,
+        content: question,
+      });
+    } catch (error) {
+      if (error instanceof LimitError) {
+        release("chat", user.id);
+        return refuse(error.notice);
+      }
+      throw error;
+    }
+
     // Titled once, from the first question, by a predicate inside the UPDATE —
     // see `setConversationTitleIfUnset` for why this cannot race into two
     // different titles.
     await setConversationTitleIfUnset(
       conversation.id,
       titleFromQuestion(question),
+    );
+  }
+  // A `regenerate-message` deliberately skips the count. The question is
+  // already stored and was already paid for; retrying an answer that failed is
+  // not a second question.
+
+  /* ── 3. THE SHARED FREE-TIER MODEL QUOTA ──────────────────────────────── */
+  //
+  // Read-only here. The slots are actually TAKEN inside the answer engine, once
+  // per model attempt, because failover makes more than one request per
+  // question. This peek exists so an exhausted pool produces a dialog with a
+  // reset time instead of an error chunk halfway through an empty answer.
+  const pool = freePoolState();
+  if (pool.usedToday >= FREE_POOL.requestsPerDay) {
+    release("chat", user.id);
+    return refuse(freePoolNotice("day", pool.usedToday, pool.resetAt));
+  }
+  if (pool.usedThisMinute >= FREE_POOL.requestsPerMinute) {
+    release("chat", user.id);
+    return refuse(
+      freePoolNotice("minute", pool.usedThisMinute, new Date(Date.now() + 60_000)),
     );
   }
 
@@ -172,6 +239,16 @@ export async function POST(request: Request): Promise<Response> {
       }
 
       closeText();
+
+      // A STREAM THE USER STOPPED GIVES ITS TOKEN BACK.
+      //
+      // Pressing stop is supposed to cost less, not more. The engine has
+      // already written the partial answer with `finish_reason = 'aborted'`,
+      // so the work is recorded; what is refunded is the rate-limit slot, so a
+      // user who stops three long answers in a row can still ask a fourth.
+      // The DAILY question count is not refunded — the question was asked, and
+      // retrieval and generation both really ran.
+      if (request.signal.aborted) release("chat", user.id);
     },
 
     /**
@@ -186,4 +263,28 @@ export async function POST(request: Request): Promise<Response> {
   });
 
   return createUIMessageStreamResponse({ stream });
+}
+
+/**
+ * A limit, as an HTTP response.
+ *
+ * 429 with a JSON body carrying the whole `LimitNotice`. The AI SDK's default
+ * transport throws an `Error` whose message is the raw response body on any
+ * non-2xx, so the pane parses this back out and opens a dialog — which is why
+ * the body is JSON and nothing else. `retry-after` is set when the limit
+ * clears on its own, because that is the header a well-behaved client reads.
+ */
+function refuse(notice: LimitNotice): Response {
+  const headers: Record<string, string> = {};
+  if (notice.resetAt) {
+    const seconds = Math.ceil(
+      (new Date(notice.resetAt).getTime() - Date.now()) / 1000,
+    );
+    if (seconds > 0) headers["retry-after"] = String(seconds);
+  }
+
+  return Response.json({ error: notice.message, limit: notice }, {
+    status: 429,
+    headers,
+  });
 }

@@ -63,7 +63,7 @@ export function UploadDropzone({
       event.preventDefault();
       depthRef.current = 0;
       setDragging(false);
-      enqueue(Array.from(event.dataTransfer.files));
+      void enqueue(Array.from(event.dataTransfer.files));
     },
     [enqueue],
   );

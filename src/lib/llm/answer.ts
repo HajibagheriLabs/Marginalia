@@ -2,6 +2,9 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 
 import { db } from "@/db";
 import { citations, documents, messages, retrievals } from "@/db/schema";
+import { freePoolNotice } from "@/lib/limits";
+import { countFreePoolRequest } from "@/lib/rate-limit";
+import { completionCostCents, recordCompletionUsage } from "@/lib/usage";
 import {
   RetrievalError,
   retrieve,
@@ -43,15 +46,21 @@ import {
  * preflight section for why a generic error is worse than useless here.
  *
  * ───────────────────────────────────────────────────────────────────────────
- * THE COST FIELD IS ZERO AND THAT IS A MEASUREMENT
+ * THE COST FIELD IS ZERO, AND IT IS LOOKED UP RATHER THAN ASSUMED
  *
- * `costCents` is written as 0 because every model in the pool is a `:free`
- * OpenRouter variant, validated at boot, whose prompt and completion prices are
- * literally `0`. That is the real number, not a placeholder and not an estimate
- * standing in for one — which is why nothing here tries to compute a notional
- * price from token counts. Tokens and latency are recorded because those ARE
- * real and are what would turn into money first if this ever moved off the free
- * pool.
+ * `costCents` comes out of the price table in src/lib/usage/pricing.ts, and on
+ * this pool it is 0 — every model is a `:free` OpenRouter variant, validated at
+ * boot, whose prompt and completion prices are literally zero. That is the real
+ * number, not a placeholder and not an estimate standing in for one.
+ *
+ * It is nonetheless COMPUTED rather than typed as a literal here. Writing `0`
+ * at this call site would work today and would be the single thing that makes
+ * moving to a paid model unsafe tomorrow: cost would silently stay zero on
+ * every message row and in every usage event, and nothing would fail. Going
+ * through the table means that day is a data change in one file.
+ *
+ * Tokens and latency are recorded because those ARE real, and they are what
+ * would turn into money first if this ever left the free pool.
  */
 
 /** Persisted alongside the answer so the trace survives the request. */
@@ -155,6 +164,9 @@ export async function* answer(
       model: null,
       promptTokens: null,
       completionTokens: null,
+      // No model was called, so there is nothing to price. Zero here is the
+      // absence of a request, not a free one.
+      costCents: 0,
       latencyMs: Date.now() - startedAt,
       finishReason: "no-context",
     });
@@ -199,6 +211,37 @@ export async function* answer(
     let emitted = false;
     text = "";
 
+    /*
+     * ONE SLOT OF THE SHARED FREE-TIER QUOTA, TAKEN PER ATTEMPT.
+     *
+     * Counted here rather than once per question because failover makes more
+     * than one request: a delisted primary followed by a working fallback is
+     * TWO calls against OpenRouter's ~20/min and ~200/day, and counting the
+     * question would under-report by exactly the amount that matters on a bad
+     * day. The route pre-checks the same counters before it starts the stream,
+     * which is where a user gets the dialog; this is where the number stays
+     * true.
+     *
+     * Refusing here is not an error and is never reported as one — the pool is
+     * spent, the sentence says so, and it names the reset time. There is
+     * deliberately no branch that reaches for a metered model instead.
+     */
+    if (!deps?.runner) {
+      const slot = countFreePoolRequest();
+      if (!slot.ok) {
+        const notice = freePoolNotice(
+          slot.scope ?? "day",
+          slot.scope === "minute" ? slot.usedThisMinute : slot.usedToday,
+          slot.resetAt,
+        );
+        yield {
+          type: "error",
+          message: `${notice.title}. ${notice.nextStep}`,
+        };
+        return;
+      }
+    }
+
     try {
       for await (const delta of runner.stream({
         modelId,
@@ -221,8 +264,29 @@ export async function* answer(
       break;
     } catch (error) {
       if (signal?.aborted) {
-        // The user navigated away or hit stop. Not a failure to report, and
-        // certainly not a reason to spend another model on a dead request.
+        /*
+         * THE USER PRESSED STOP, or closed the tab.
+         *
+         * Not a failure to report, and certainly not a reason to spend another
+         * model on a dead request. But it is also not nothing: the question is
+         * already a row, and returning here without writing an answer would
+         * leave that question permanently unanswered in the thread, which on
+         * reload looks like the app lost the reply rather than like the user
+         * stopped it.
+         *
+         * So the partial text is persisted with `finish_reason = 'aborted'`,
+         * along with its retrieval trace. The row says exactly what happened.
+         * The client is already gone, so nothing is yielded — this is
+         * bookkeeping for the next time the thread is opened.
+         */
+        await persistAborted({
+          conversationId,
+          userId,
+          model: modelId,
+          text,
+          latencyMs: Date.now() - startedAt,
+          candidates,
+        });
         return;
       }
 
@@ -271,6 +335,15 @@ export async function* answer(
   const usage = runner.lastUsage();
   const latencyMs = Date.now() - startedAt;
 
+  // From the price table, not from a literal. Zero on this pool, and zero
+  // because the table says the model is priced at zero — see the header.
+  const costCents =
+    completionCostCents({
+      model: served,
+      promptTokens: usage.promptTokens,
+      completionTokens: usage.completionTokens,
+    }) ?? 0;
+
   const messageId = await persistMessage({
     conversationId,
     content: validation.text,
@@ -280,11 +353,23 @@ export async function* answer(
     model: served,
     promptTokens: usage.promptTokens,
     completionTokens: usage.completionTokens,
+    costCents,
     latencyMs,
     finishReason: usage.finishReason,
   });
 
   await persistTrace({ messageId, candidates, citations: validation.citations });
+
+  // THE METER. One `usage_events` row per answer, priced by the same table and
+  // attributed to the model that actually served it. Metering never fails the
+  // answer it measures — see src/lib/usage/record.ts.
+  await recordCompletionUsage({
+    userId,
+    model: served,
+    promptTokens: usage.promptTokens,
+    completionTokens: usage.completionTokens,
+    latencyMs,
+  });
 
   yield { type: "citations", citations: validation.citations };
   yield { type: "trace", candidates };
@@ -295,8 +380,7 @@ export async function* answer(
       model: served,
       promptTokens: usage.promptTokens,
       completionTokens: usage.completionTokens,
-      // See the header: zero because it IS zero.
-      costCents: 0,
+      costCents,
       latencyMs,
       finishReason: usage.finishReason,
       invalidMarkers: validation.invalidMarkers,
@@ -331,6 +415,8 @@ async function persistMessage(input: {
   model: string | null;
   promptTokens: number | null;
   completionTokens: number | null;
+  /** Integer cents, from the price table. Genuinely zero on the free pool. */
+  costCents: number;
   latencyMs: number;
   finishReason: string | null;
 }): Promise<string> {
@@ -343,14 +429,72 @@ async function persistMessage(input: {
       model: input.model,
       promptTokens: input.promptTokens,
       completionTokens: input.completionTokens,
-      // Integer cents, and genuinely zero on the free pool.
-      costCents: 0,
+      costCents: input.costCents,
       latencyMs: input.latencyMs,
       finishReason: input.finishReason,
     })
     .returning({ id: messages.id });
 
   return row.id;
+}
+
+/**
+ * Record a generation the user stopped.
+ *
+ * `finish_reason` is 'aborted', which is what makes this row honest: the
+ * content is whatever had arrived, it is not a complete answer, and nothing
+ * downstream should treat it as one. The retrieval trace is kept because the
+ * search really did happen and really did cost the work it cost.
+ *
+ * CITATIONS ARE DELIBERATELY NOT WRITTEN. Marker validation runs over a
+ * finished answer; half a sentence can hold half a marker, and persisting
+ * citations parsed out of a truncated text would either invent a link or
+ * discard a real one. The partial text keeps its markers as characters and
+ * gains no chips — which reads correctly, because the answer was interrupted.
+ *
+ * Metered like any other completion: the tokens were generated and, on a paid
+ * model, would have been billed. Stopping a stream stops the generation; it
+ * does not refund what was already produced.
+ */
+async function persistAborted(input: {
+  conversationId: string;
+  userId: string;
+  model: string;
+  text: string;
+  latencyMs: number;
+  candidates: RetrievalCandidate[];
+}): Promise<void> {
+  try {
+    const messageId = await persistMessage({
+      conversationId: input.conversationId,
+      content: input.text,
+      model: input.model,
+      promptTokens: null,
+      completionTokens: null,
+      costCents: 0,
+      latencyMs: input.latencyMs,
+      finishReason: "aborted",
+    });
+
+    await persistTrace({
+      messageId,
+      candidates: input.candidates,
+      citations: [],
+    });
+
+    await recordCompletionUsage({
+      userId: input.userId,
+      model: input.model,
+      promptTokens: null,
+      completionTokens: null,
+      latencyMs: input.latencyMs,
+    });
+  } catch (error) {
+    // The client is already gone. A failure to write the record of a cancelled
+    // answer must not become an unhandled rejection in a request nobody is
+    // reading.
+    console.error("[llm] failed to record an aborted answer", error);
+  }
 }
 
 /**

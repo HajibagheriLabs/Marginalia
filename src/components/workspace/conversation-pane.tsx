@@ -14,6 +14,7 @@ import { MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 
 import { Composer } from "@/components/composer";
+import { useLimitDialog } from "@/components/limit-dialog";
 import {
   markId,
   useCitationBridge,
@@ -32,6 +33,7 @@ import {
   type ScopeDocument,
 } from "@/lib/chat/types";
 import { inkForIndex, inkOrder, type InkName } from "@/lib/ink";
+import { isLimitNotice, type LimitNotice } from "@/lib/limits";
 import { DOCUMENT_STATUS_META } from "@/lib/document-status";
 import { cn } from "@/lib/utils";
 import {
@@ -86,6 +88,7 @@ export function ConversationPane({
   documents,
 }: ConversationPaneProps) {
   const router = useRouter();
+  const { showLimit } = useLimitDialog();
 
   const [conversationId, setConversationId] = useState(conversation?.id ?? null);
   const [scope, setScope] = useState<ScopeDocument[]>(initialScope);
@@ -133,6 +136,28 @@ export function ConversationPane({
     throttle: 50,
     onError: (error) => console.error("[chat]", error),
   });
+
+  /* ── A LIMIT ARRIVES AS AN ERROR, AND IT IS NOT ONE ───────────────────────
+   * The route answers a spent allowance with a 429 and a JSON body, and the AI
+   * SDK's transport turns any non-2xx into `new Error(body)` — the raw
+   * response text, verbatim. So the notice is parsed back out and shown as the
+   * dialog it was written to be, rather than as a red line under the composer
+   * claiming the answer failed.
+   *
+   * Handled in an effect rather than in `onError` because both halves are
+   * state changes — opening the dialog and clearing the chat's error — and an
+   * effect is where writing to state in response to a value belongs. Anything
+   * that is not a notice is a real error and keeps the error state the pane
+   * already renders, with its Retry.
+   */
+  const chatError = chat.error;
+  const clearChatError = chat.clearError;
+  useEffect(() => {
+    const notice = limitFromError(chatError);
+    if (!notice) return;
+    showLimit(notice);
+    clearChatError();
+  }, [chatError, clearChatError, showLimit]);
 
   const streaming = chat.status === "streaming" || chat.status === "submitted";
 
@@ -580,4 +605,25 @@ function lastUserText(messages: MarginaliaUIMessage[]): string {
       .join("");
   }
   return "";
+}
+
+
+/**
+ * Recover a `LimitNotice` from a transport error, or null.
+ *
+ * The AI SDK throws `new Error(await response.text())` for any non-2xx, so a
+ * 429 from the chat route reaches the client as an `Error` whose message is
+ * the JSON body. That is not a documented contract, which is why every step
+ * here is defensive: parse, guard the shape, and fall through to null. A
+ * change in the SDK degrades this to "the limit shows as an error", never to a
+ * crash.
+ */
+function limitFromError(error: unknown): LimitNotice | null {
+  if (!(error instanceof Error) || !error.message.startsWith("{")) return null;
+  try {
+    const body = JSON.parse(error.message) as { limit?: unknown };
+    return isLimitNotice(body.limit) ? body.limit : null;
+  } catch {
+    return null;
+  }
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import type { AnswerMetadata } from "@/lib/chat/types";
+import { formatCost } from "@/lib/usage/pricing";
 import { cn } from "@/lib/utils";
 
 /**
@@ -21,13 +22,25 @@ import { cn } from "@/lib/utils";
  * message row: the model that ACTUALLY served it.
  *
  * ───────────────────────────────────────────────────────────────────────────
- * WHY THERE IS NO COST
+ * WHY THE COST READS "$0.00 · free tier"
  *
- * `costCents` is 0 on the free pool and that is the real number, not an
- * estimate — every id is validated `:free` at boot. Rendering "$0.00" would
- * imply a measurement was taken and rounded; "Free" states the fact. Tokens and
- * latency are shown because those ARE measurements, and they are what would
- * turn into money first if this ever moved off the free tier.
+ * Because both halves are needed and neither is enough alone.
+ *
+ * `$0.00` on its own is ambiguous in the direction that matters: it is what a
+ * rounded-down fraction of a cent also looks like, so a reader cannot tell a
+ * measurement from a truncation. Omitting the figure entirely is worse — a
+ * blank cost column reads as missing data, and this footer exists precisely
+ * because a product that shows you its retrieval and hides its bill is only
+ * half honest.
+ *
+ * So the figure is shown AND qualified. The qualifier is what makes it a
+ * statement: this is not a small number, it is no number, because every model
+ * in the pool is a `:free` variant validated at boot and embeddings run on this
+ * server's CPU. The string is built by `formatCost` from the same price table
+ * that wrote the value, so the two can never disagree.
+ *
+ * Tokens and latency sit beside it because those ARE measurements, and they are
+ * what would turn into money first if this ever left the free tier.
  */
 export function AnswerMeta({
   metadata,
@@ -49,7 +62,7 @@ export function AnswerMeta({
     parts.push(`${format(tokensIn)} in / ${format(tokensOut)} out`);
   }
 
-  parts.push(metadata.costCents === 0 ? "free" : cents(metadata.costCents));
+  parts.push(formatCost(metadata.costCents, metadata.model));
 
   if (metadata.latencyMs > 0) parts.push(duration(metadata.latencyMs));
 
@@ -66,6 +79,17 @@ export function AnswerMeta({
           {part}
         </span>
       ))}
+
+      {/* An answer the user stopped is not a short answer — it is an
+          incomplete one, and the difference is only visible if it is stated.
+          The row is stored with finish_reason 'aborted' precisely so this can
+          be said on reload as well as live. */}
+      {metadata.finishReason === "aborted" ? (
+        <span className="whitespace-nowrap text-text-muted">
+          <span className="mr-2 opacity-50">·</span>
+          stopped
+        </span>
+      ) : null}
 
       {/* A stripped marker is a faithfulness violation, and the reader is
           entitled to know one happened to the answer they are looking at —
@@ -86,11 +110,6 @@ export function AnswerMeta({
 
 function format(value: number | null): string {
   return value === null ? "—" : value.toLocaleString("en-US");
-}
-
-/** Integer cents, formatted at the edge. Never a fabricated fraction. */
-function cents(value: number): string {
-  return `${(value / 100).toFixed(2)} USD`;
 }
 
 function duration(ms: number): string {

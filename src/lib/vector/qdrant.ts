@@ -200,5 +200,24 @@ export function createQdrantVectorStore(
         },
       });
     },
+
+    async deleteByUser(userId: string): Promise<void> {
+      // Defence in depth, exactly as in `search`: an empty user id would build
+      // a filter that matches nothing in Qdrant's semantics — or, on a future
+      // client that treats it as absent, EVERY point in a shared collection.
+      // A delete is not the operation to find out which.
+      if (!userId) {
+        throw new Error(
+          "vector deleteByUser called without a userId — refusing to run an unscoped delete",
+        );
+      }
+
+      await getClient().delete(collection, {
+        wait: true,
+        filter: {
+          must: [{ key: "user_id", match: { value: userId } }],
+        },
+      });
+    },
   };
 }

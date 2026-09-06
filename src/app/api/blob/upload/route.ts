@@ -38,16 +38,42 @@
  * │ it works identically in both places, and it verifies the stored object   │
  * │ rather than trusting a callback payload.                                 │
  * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * WHAT THIS ROUTE ENFORCES, AND WHAT IT ONLY PRE-CHECKS
+ *
+ * ENFORCED here, because nothing later can: the token's content-type
+ * allowlist and `maximumSizeInBytes`. Those constraints are signed into the
+ * token and applied by the STORE, so a client that lies about either has its
+ * transfer rejected at the destination.
+ *
+ * PRE-CHECKED here, and decided elsewhere: the document count. Two token
+ * requests can pass this check concurrently, which is precisely why the real
+ * enforcement is a count-and-insert in one transaction under a per-user
+ * advisory lock — see `insertDocumentWithinLimit`. The check here exists so a
+ * user at the ceiling learns it before spending 25 MB of their uplink, not
+ * after.
+ *
+ * RATE LIMITED here: a token bucket per user. A token is a bearer credential
+ * that authorises writes into the store, and handing out an unbounded number
+ * of them is worth stopping regardless of what the user does with them.
  */
 import { NextResponse } from "next/server";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 
 import { getUser } from "@/lib/auth-server";
-import { countUserDocuments } from "@/lib/documents";
 import { env } from "@/lib/env";
 import {
+  LIMITS,
+  documentLimitNotice,
+  pageLimitNotice,
+  rateLimitNotice,
+  type LimitNotice,
+} from "@/lib/limits";
+import { release, take } from "@/lib/rate-limit";
+import { countUserDocuments, countUserPages } from "@/lib/usage";
+import {
   ACCEPTED_CONTENT_TYPES,
-  MAX_DOCUMENTS_PER_USER,
   MAX_UPLOAD_BYTES,
   isOwnedBlobPathname,
 } from "@/lib/upload";
@@ -72,8 +98,18 @@ const TOKEN_LIFETIME_MS = 10 * 60 * 1000;
  * echoed to the browser — an internal message is at best confusing and at worst
  * leaks something. This class is the marker for "this sentence is meant to be
  * read"; everything else becomes a generic message and a server-side log.
+ *
+ * It carries the `LimitNotice` when the refusal is a limit, so the browser can
+ * open the dialog that names the ceiling instead of showing a toast.
  */
-class UploadRefused extends Error {}
+class UploadRefused extends Error {
+  readonly notice?: LimitNotice;
+
+  constructor(message: string, notice?: LimitNotice) {
+    super(message);
+    this.notice = notice;
+  }
+}
 
 export async function POST(request: Request): Promise<NextResponse> {
   const body = (await request.json()) as HandleUploadBody;
@@ -85,6 +121,25 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json(
       { error: "Sign in to upload documents." },
       { status: 401 },
+    );
+  }
+
+  // Per-user throttle, before any database work. Keyed by user rather than by
+  // address: a token is minted against an account, and two people behind one
+  // office NAT are not each other's problem.
+  const rate = take("upload", user.id);
+  if (!rate.ok) {
+    const notice = rateLimitNotice("uploads", rate.resetAt);
+    return NextResponse.json(
+      { error: notice.message, limit: notice },
+      {
+        status: 429,
+        headers: {
+          "retry-after": String(
+            Math.max(1, Math.ceil((rate.resetAt.getTime() - Date.now()) / 1000)),
+          ),
+        },
+      },
     );
   }
 
@@ -104,11 +159,24 @@ export async function POST(request: Request): Promise<NextResponse> {
           );
         }
 
-        const used = await countUserDocuments(user.id);
-        if (used >= MAX_DOCUMENTS_PER_USER) {
-          throw new UploadRefused(
-            `You have ${used} documents, which is the limit of ${MAX_DOCUMENTS_PER_USER}. Delete one to upload another.`,
-          );
+        const [documents, pages] = await Promise.all([
+          countUserDocuments(user.id),
+          countUserPages(user.id),
+        ]);
+
+        if (documents >= LIMITS.documents) {
+          const notice = documentLimitNotice(documents);
+          throw new UploadRefused(`${notice.message} ${notice.nextStep}`, notice);
+        }
+
+        // The page ceiling cannot be checked properly until the file has been
+        // parsed — a 25 MB PDF may hold 40 pages or 4,000 — so extraction is
+        // where it is decided. What CAN be answered now is whether there is
+        // any room at all, and refusing an upload that could not possibly fit
+        // is better than accepting it and failing it four stages later.
+        if (pages >= LIMITS.totalPages) {
+          const notice = pageLimitNotice(pages, 1);
+          throw new UploadRefused(`${notice.message} ${notice.nextStep}`, notice);
         }
 
         return {
@@ -129,14 +197,28 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     return NextResponse.json(result);
   } catch (error) {
+    // A refusal did no work, so the bucket token it spent is given back.
+    // Otherwise a user at the document ceiling would burn their whole upload
+    // allowance discovering it.
+    //
+    // NOTE ON WHERE THIS BODY GOES: @vercel/blob's client `upload()` does not
+    // surface a non-2xx body from this route — it throws "Failed to retrieve
+    // the client token" and discards the response. So the `limit` payload here
+    // is for logs and for any caller that talks to this route directly; the
+    // BROWSER learns about a limit from `checkUploadAllowance` before the
+    // upload starts, and from `registerUploadedDocument` after it finishes.
+    // Both are Server Actions, and both return the same `LimitNotice` shape.
+    if (error instanceof UploadRefused) {
+      release("upload", user.id);
+      return NextResponse.json(
+        { error: error.message, limit: error.notice ?? null },
+        { status: error.notice ? 409 : 400 },
+      );
+    }
+
     console.error("[upload] token request failed", error);
     return NextResponse.json(
-      {
-        error:
-          error instanceof UploadRefused
-            ? error.message
-            : "The upload could not start. Try again.",
-      },
+      { error: "The upload could not start. Try again." },
       { status: 400 },
     );
   }

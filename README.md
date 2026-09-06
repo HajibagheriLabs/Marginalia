@@ -54,6 +54,37 @@ same way whatever the format. Pages are virtualised — a 300-page contract moun
 and in-document search runs over the extracted text in Postgres, because a search that could only see
 the rendered pages would confidently report the wrong number.
 
+## Limits and cost
+
+Everything runs on free tiers, so the app is bounded in both directions: what one account can consume,
+and what the shared model quota can supply. The ceilings live in one file, `src/lib/limits.ts`, and
+each is enforced on the server inside the same transaction as the write it constrains.
+
+| Limit                | Value       | Enforced in                                                        |
+| -------------------- | ----------- | ------------------------------------------------------------------ |
+| Documents            | 25          | count + insert in one transaction, per-user advisory lock           |
+| Pages (all documents)| 2,000       | the extraction stage, inside the transaction that writes the pages  |
+| Questions per day    | 100 (UTC)   | count + insert of the question row, same lock                       |
+| Upload size          | 25 MB       | signed into the Blob token; the store rejects the transfer          |
+
+A limit is not an error. When one blocks an action the app opens a dialog naming the exact ceiling,
+the current usage, and the one thing that clears it — "Delete a document to upload another" — rather
+than a toast that disappears before it is read.
+
+Requests are also throttled by a token bucket per user on the chat and upload-token routes, and per IP
+on sign-in, with a stricter bucket for the demo account whose credentials are public. The limiter is
+in-memory, which is the right trade on a free tier and is documented as such in `src/lib/rate-limit.ts`
+alongside the Upstash upgrade path.
+
+Every embedding batch and every completion is recorded in `usage_events`, priced from a table in
+`src/lib/usage/pricing.ts`. Every entry in that table is zero, and honestly so: each OpenRouter model
+id must end in `:free`, which is checked at boot and refused otherwise, and embeddings are computed
+locally in the Node process. There is no code path that falls back to a metered model. The table exists
+anyway, because the accounting is what makes the app portable to a paid model later — that day is a
+data change in one file rather than a hunt for every place a zero was typed. Answers therefore read
+`$0.00 · free tier`, and the settings page reports tokens, requests, and compute time rather than
+pretending to a dollar figure.
+
 ## Stack
 
 | Layer         | Choice                                                                 |
@@ -156,10 +187,13 @@ src/
   lib/
     brand.ts         APP_NAME — the product name lives here and nowhere else
     env.ts           zod-validated environment, parsed at boot
+    limits.ts        every per-user ceiling, and the sentences that explain them
+    rate-limit.ts    token buckets and the shared free-tier model counters
     chat/            the conversation wire format, answer markdown, titles
     ingest/          extract → chunk → embed → index
     llm/             model gateway, prompts, citation parsing
     retrieval/       dense + lexical search, RRF fusion, reranking
+    usage/           limit enforcement, the price table, the meter
     vector/          Qdrant client and the single filtered search() helper
     viewer/          page model, in-document search, citation anchors
 scripts/             build steps (copying the PDF.js runtime into public/)

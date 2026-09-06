@@ -118,4 +118,18 @@ export interface VectorStore {
 
   /** Remove every point for one document. Used by delete and by re-ingest. */
   deleteByDocument(documentId: string): Promise<void>;
+
+  /**
+   * Remove every point belonging to one user. Used only by "delete all my
+   * data".
+   *
+   * Present as its own method rather than as a loop over `deleteByDocument`
+   * because the erasure has to be COMPLETE, and a loop is only as complete as
+   * the list it iterates. A document row lost to a partial failure, or a point
+   * whose document was hard-deleted at some point in the past, would survive
+   * the loop and leave the user's text embedded in a shared collection after
+   * they asked for it to be gone. One filter on `user_id` cannot miss a point
+   * the loop never knew about.
+   */
+  deleteByUser(userId: string): Promise<void>;
 }

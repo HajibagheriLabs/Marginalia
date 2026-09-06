@@ -311,22 +311,16 @@ async function loadTrace(
  * WRITES USED BY THE STREAMING ROUTE
  * ========================================================================== */
 
-/** Persist a turn the user typed. Returns the row id so the client can align. */
-export async function persistUserMessage(input: {
-  conversationId: string;
-  content: string;
-}): Promise<string> {
-  const [row] = await db
-    .insert(messages)
-    .values({
-      conversationId: input.conversationId,
-      role: "user",
-      content: input.content,
-    })
-    .returning({ id: messages.id });
-
-  return row.id;
-}
+/**
+ * A question is stored by `insertUserMessageWithinLimit` in
+ * src/lib/usage/guard.ts, not here.
+ *
+ * There is deliberately no plain `persistUserMessage` in this file. The daily
+ * question limit is enforced by counting and inserting in ONE transaction, and
+ * a second, unguarded way to write a `role = 'user'` row is exactly how that
+ * limit would come to be bypassed by the next call site somebody adds.
+ */
+export { insertUserMessageWithinLimit } from "@/lib/usage/guard";
 
 /**
  * Note a scope change in the thread.

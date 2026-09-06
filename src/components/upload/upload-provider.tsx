@@ -12,7 +12,11 @@ import {
 import { useRouter } from "next/navigation";
 import { upload } from "@vercel/blob/client";
 
-import { registerUploadedDocument } from "@/server/actions/documents";
+import { useLimitDialog } from "@/components/limit-dialog";
+import {
+  checkUploadAllowance,
+  registerUploadedDocument,
+} from "@/server/actions/documents";
 import {
   buildBlobPathname,
   matchAcceptedType,
@@ -37,6 +41,20 @@ import {
  * effect that starts work when it notices queued items has to guard against
  * re-entry on every render; a pump called from the one place work is added does
  * not.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * LIMITS ARE CHECKED TWICE, AND ONLY THE SECOND ONE DECIDES.
+ *
+ * `enqueue` asks the server whether there is room BEFORE the first byte moves,
+ * and opens the limit dialog if there is not. That check is a courtesy: it
+ * saves the user from watching a 25 MB transfer succeed and then be thrown
+ * away, and it is the reason the dialog names a ceiling rather than a failed
+ * upload.
+ *
+ * The check that DECIDES runs inside `registerUploadedDocument`, in the same
+ * transaction as the insert. When it refuses, the action returns the same
+ * `LimitNotice` shape and the same dialog opens — the only difference being
+ * that the blob has already been discarded server-side.
  */
 
 export type UploadItemStatus =
@@ -63,8 +81,14 @@ export interface UploadItem {
 
 interface UploadContextValue {
   items: UploadItem[];
-  /** Validates, then queues. Rejected files appear in the queue as errors. */
-  enqueue: (files: File[]) => void;
+  /**
+   * Checks the account's allowance, validates each file, then queues.
+   *
+   * Async because the allowance check is a round trip. Callers fire and
+   * forget — the queue is the progress indicator, so there is nothing useful
+   * to await at a click handler.
+   */
+  enqueue: (files: File[]) => Promise<void>;
   cancel: (id: string) => void;
   retry: (id: string) => void;
   dismiss: (id: string) => void;
@@ -109,6 +133,7 @@ export function UploadProvider({
   children: React.ReactNode;
 }) {
   const router = useRouter();
+  const { showLimit } = useLimitDialog();
   const [items, setItems] = useState<UploadItem[]>([]);
 
   /** Waiting to run, in order. */
@@ -190,6 +215,18 @@ export function UploadProvider({
         });
 
         if (!result.ok) {
+          // A limit refusal is not a retryable error: retrying changes
+          // nothing until a document is deleted. It gets the dialog, and the
+          // queue item says so without offering a Retry button.
+          if (result.limit) {
+            showLimit(result.limit);
+            patch(id, {
+              status: "error",
+              error: result.limit.nextStep,
+              retryable: false,
+            });
+            return;
+          }
           patch(id, { status: "error", error: result.error });
           return;
         }
@@ -215,7 +252,7 @@ export function UploadProvider({
         controllersRef.current.delete(id);
       }
     },
-    [patch, router, scheduleRemoval, userId],
+    [patch, router, scheduleRemoval, showLimit, userId],
   );
 
   /**
@@ -242,8 +279,19 @@ export function UploadProvider({
   }, [patch, runOne]);
 
   const enqueue = useCallback(
-    (files: File[]) => {
+    async (files: File[]) => {
       if (files.length === 0) return;
+
+      // Ask before transferring. The answer is about the ACCOUNT, so it is
+      // asked once for the whole drop rather than once per file, and a drop of
+      // ten files onto an account with three slots left is refused as a whole
+      // — telling someone "three of your ten uploaded" after the fact is worse
+      // than telling them the ceiling first.
+      const allowance = await checkUploadAllowance(files.length);
+      if (!allowance.ok) {
+        if (allowance.limit) showLimit(allowance.limit);
+        return;
+      }
 
       const accepted: PendingUpload[] = [];
       const added: UploadItem[] = [];
@@ -285,7 +333,7 @@ export function UploadProvider({
       pendingRef.current.push(...accepted);
       void pump();
     },
-    [pump],
+    [pump, showLimit],
   );
 
   const cancel = useCallback(

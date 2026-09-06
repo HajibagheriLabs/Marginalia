@@ -9,18 +9,19 @@
  * client is never trusted; it is only made fast.
  */
 
-/** 25 MB. Stated in the dropzone, enforced on the client, enforced in the token. */
-export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
-export const MAX_UPLOAD_LABEL = "25 MB";
+import { LIMITS, UPLOAD_LIMIT_LABEL } from "./limits";
 
 /**
- * Per-user document cap, checked before a token is minted.
- *
- * This is a free-tier project: Neon, Qdrant, and Blob all have hard quotas, and
- * a single user uploading without limit would spend them for everyone. The
- * check lives on the server because a client-side cap is a suggestion.
+ * The two upload ceilings come from src/lib/limits.ts, which is the ONE file
+ * holding every per-user limit in the application. They are re-exported here
+ * under their upload-side names so this module stays the single import for
+ * "everything about accepting a file" — but the numbers themselves are not
+ * defined twice, because a limit written in two places is a limit that
+ * eventually disagrees with itself.
  */
-export const MAX_DOCUMENTS_PER_USER = 25;
+export const MAX_UPLOAD_BYTES = LIMITS.uploadBytes;
+export const MAX_UPLOAD_LABEL = UPLOAD_LIMIT_LABEL;
+export const MAX_DOCUMENTS_PER_USER = LIMITS.documents;
 
 export interface AcceptedFileType {
   /** Lowercase, with the dot. */

@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import { chunks, documents } from "@/db/schema";
@@ -84,16 +84,8 @@ export async function listUserDocuments(
 }
 
 /**
- * How many documents this user currently holds, for the quota check.
- *
- * Counted rather than cached: the number is small, the query is indexed on
- * (user_id, created_at), and a stale count is a quota that does not hold.
+ * The document count lives in src/lib/usage/guard.ts, next to the transaction
+ * that enforces the limit it feeds. Counting in one file and enforcing in
+ * another is how a quota check drifts out of step with the write it guards.
  */
-export async function countUserDocuments(userId: string): Promise<number> {
-  const [row] = await db
-    .select({ value: count() })
-    .from(documents)
-    .where(and(eq(documents.userId, userId), isNull(documents.deletedAt)));
-
-  return row?.value ?? 0;
-}
+export { countUserDocuments } from "@/lib/usage/guard";

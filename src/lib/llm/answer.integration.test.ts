@@ -645,7 +645,7 @@ describe.skipIf(!configured)("answer engine", () => {
     expect(rows).toHaveLength(0);
   }, 120_000);
 
-  it("stops quietly when the request is aborted", async () => {
+  it("records an aborted answer instead of leaving the question unanswered", async () => {
     const controller = new AbortController();
 
     const runner: ModelRunner = {
@@ -676,12 +676,30 @@ describe.skipIf(!configured)("answer engine", () => {
     );
 
     // No error event: the user cancelled, which is not a failure to report.
+    // Nothing is yielded at all — the client is already gone.
     expect(events.some((event) => event.type === "error")).toBe(false);
-    // And no second model was tried for a request nobody is waiting on.
+    expect(events.some((event) => event.type === "done")).toBe(false);
+
+    /*
+     * ONE ROW, MARKED ABORTED.
+     *
+     * Not zero rows. The question is already stored, and returning without
+     * writing anything would leave it permanently unanswered in the thread —
+     * which on reload looks like the app lost the reply rather than like the
+     * user stopped it. `finish_reason` is what tells the difference, and the
+     * answer footer reads it back as "stopped".
+     *
+     * There is also exactly one row rather than two: no second model is tried
+     * for a request nobody is waiting on.
+     */
     const rows = await db
       .select()
       .from(messages)
       .where(eq(messages.conversationId, conversationId));
-    expect(rows).toHaveLength(0);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].role).toBe("assistant");
+    expect(rows[0].finishReason).toBe("aborted");
+    expect(rows[0].model).toBe("a/one:free");
   }, 120_000);
 });

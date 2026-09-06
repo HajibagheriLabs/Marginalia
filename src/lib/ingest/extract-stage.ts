@@ -4,6 +4,7 @@ import { get } from "@vercel/blob";
 import { db } from "@/db";
 import { documentPages, documents } from "@/db/schema";
 import { env } from "@/lib/env";
+import { LimitError, assertPageAllowance } from "@/lib/usage";
 
 import { ExtractionError, extractDocument } from "./extract";
 import { StageError, type StageResult, type StageDeps } from "./stage";
@@ -123,29 +124,64 @@ export async function runExtraction(
     throw error;
   }
 
-  await db.transaction(async (tx) => {
-    // IDEMPOTENCE: a re-run replaces the previous extraction wholesale rather
-    // than appending to it. Everything keyed to the old pages is downstream of
-    // this stage and is rebuilt by the stages that follow.
-    await tx
-      .delete(documentPages)
-      .where(eq(documentPages.documentId, document.id));
+  try {
+    await db.transaction(async (tx) => {
+      // IDEMPOTENCE: a re-run replaces the previous extraction wholesale rather
+      // than appending to it. Everything keyed to the old pages is downstream of
+      // this stage and is rebuilt by the stages that follow.
+      await tx
+        .delete(documentPages)
+        .where(eq(documentPages.documentId, document.id));
 
-    await tx.insert(documentPages).values(
-      result.pages.map((page) => ({
-        documentId: document.id,
-        pageNumber: page.pageNumber,
-        text: page.text,
-        charStart: page.charStart,
-        charEnd: page.charEnd,
-      })),
-    );
+      /*
+       * THE PAGE LIMIT IS DECIDED HERE.
+       *
+       * This is the first moment the number is knowable: a 25 MB PDF may hold
+       * 40 pages or 4,000, and nothing in the upload request distinguishes
+       * them. Checking earlier would mean guessing, and a guessed ceiling
+       * either blocks valid uploads or fails to block the ones that matter.
+       *
+       * It runs INSIDE this transaction, AFTER the delete above, and under a
+       * per-user advisory lock. The ordering is what makes a retry free — this
+       * document's own previous pages are already out of the count, so
+       * re-extracting a 400-page file measures it once rather than twice — and
+       * the lock is what stops two documents extracting concurrently from both
+       * passing a check that only one of them fits through.
+       *
+       * A refusal rolls back this whole transaction, so a document that does
+       * not fit leaves no pages behind. It surfaces as a failed document with
+       * a "Retry" action, which is exactly right: the file is intact in the
+       * store, and deleting something else makes the retry succeed.
+       */
+      await assertPageAllowance(tx, userId, result.pages.length);
 
-    await tx
-      .update(documents)
-      .set({ pageCount: result.pageCount })
-      .where(eq(documents.id, document.id));
-  });
+      await tx.insert(documentPages).values(
+        result.pages.map((page) => ({
+          documentId: document.id,
+          pageNumber: page.pageNumber,
+          text: page.text,
+          charStart: page.charStart,
+          charEnd: page.charEnd,
+        })),
+      );
+
+      await tx
+        .update(documents)
+        .set({ pageCount: result.pageCount })
+        .where(eq(documents.id, document.id));
+    });
+  } catch (error) {
+    // A limit is not a bug, and its sentence was written for the person who
+    // uploaded the file — it names the ceiling, the current usage, and the way
+    // out. Re-thrown as a StageError so the orchestrator records it as the
+    // document's error message and surfaces the "Retry" action beside it.
+    if (error instanceof LimitError) {
+      throw new StageError(`${error.notice.message} ${error.notice.nextStep}`, {
+        cause: error,
+      });
+    }
+    throw error;
+  }
 
   return {
     complete: true,

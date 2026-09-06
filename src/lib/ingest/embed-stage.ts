@@ -1,12 +1,13 @@
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { chunks, documents, usageEvents } from "@/db/schema";
+import { chunks, documents } from "@/db/schema";
 import {
   LOCAL_EMBEDDING,
   getEmbeddingProvider,
   type EmbeddingProvider,
 } from "@/lib/embeddings";
+import { recordEmbeddingUsage } from "@/lib/usage";
 import { getVectorStore, type VectorPoint, type VectorStore } from "@/lib/vector";
 
 import { countTokens, embeddingText } from "./chunk";
@@ -261,7 +262,11 @@ export async function runEmbedding(
   const elapsed = Date.now() - startedAt;
 
   if (embedded > 0) {
-    await recordEmbeddingUsage(userId, tokens, elapsed);
+    // The meter. See src/lib/usage/record.ts: cost is 0 because this ran on
+    // this server's CPU, and `source` records "local" so the zero reads as a
+    // fact rather than as missing data. What is real here is the token count
+    // and the elapsed time.
+    await recordEmbeddingUsage({ userId, tokens, durationMs: elapsed });
   }
 
   const complete = embedded === pending.length;
@@ -271,38 +276,4 @@ export async function runEmbedding(
       complete ? "" : " (resuming)"
     }`,
   };
-}
-
-/**
- * Meter the work, honestly.
- *
- * `cost_cents` is 0 and that is a FACT, not a placeholder: the model runs in
- * this process on this server's CPU, so there is no per-token price to record
- * and inventing one — a notional OpenAI rate, say — would put a fabricated
- * number in front of the user on the settings page.
- *
- * What is real is the token count and the wall-clock time, so those are what
- * get stored, with `source: "local"` to say why the price column is empty. The
- * settings page can then say "1.2M tokens embedded locally, 4m 12s of compute,
- * no API cost" instead of showing a zero that looks like missing data.
- */
-async function recordEmbeddingUsage(
-  userId: string,
-  tokens: number,
-  durationMs: number,
-): Promise<void> {
-  try {
-    await db.insert(usageEvents).values({
-      userId,
-      kind: "embedding",
-      quantity: tokens,
-      costCents: 0,
-      source: "local",
-      durationMs,
-    });
-  } catch (error) {
-    // Metering is bookkeeping. Losing a usage row must never fail an ingestion
-    // that otherwise succeeded, or turn a retry into a loop.
-    console.error("[embed] failed to record usage", error);
-  }
 }
