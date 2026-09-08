@@ -60,6 +60,63 @@ export const LIMITS = {
   messagesPerDay: 100,
 
   /**
+   * ┌────────────────────────────────────────────────────────────────────────┐
+   * │ THE HARD MONEY CEILING. Integer cents, per user, per UTC day.          │
+   * │                                                                        │
+   * │ WHY IT EXISTS WHEN EVERY MODEL IS FREE. Today this can never bind:     │
+   * │ every configured slug ends in `:free`, `env.ts` refuses to boot        │
+   * │ otherwise, embeddings run in-process, and `completionCostCents`        │
+   * │ therefore returns 0 for every answer. The sum this compares against is │
+   * │ a column of zeroes.                                                    │
+   * │                                                                        │
+   * │ It exists because that is exactly one configuration change away from   │
+   * │ being false, and the failure mode on the day it changes is the one     │
+   * │ this whole project is arranged to avoid: work continues silently and   │
+   * │ the only signal is an invoice. A ceiling written now, while it is      │
+   * │ provably inert, is a ceiling that is already in the enforcement path,  │
+   * │ already returns a sentence a person can read, and already has a test.  │
+   * │ A ceiling added on the day it is needed is added under pressure and    │
+   * │ after the bill.                                                        │
+   * │                                                                        │
+   * │ It is also the honest counterpart to the free-pool counter. That one   │
+   * │ bounds REQUESTS against a quota that belongs to the app; this one      │
+   * │ bounds SPEND and belongs to the user. A per-request quota does not     │
+   * │ bound money — one call to an expensive model with a long context costs │
+   * │ more than a thousand calls to a small one — so the two are not         │
+   * │ substitutes for each other.                                            │
+   * │                                                                        │
+   * │ 50 cents. Deliberately small: on the free pool nobody can reach it,    │
+   * │ and on a paid pool it is a limit that fails loudly on the first day    │
+   * │ rather than a budget somebody has to notice being spent.               │
+   * │                                                                        │
+   * │ Enforced in: `insertUserMessageWithinLimit` (src/lib/usage/guard.ts),  │
+   * │ inside the same transaction and the same per-user advisory lock as the │
+   * │ daily question count, so the two cannot disagree and neither can race. │
+   * └────────────────────────────────────────────────────────────────────────┘
+   */
+  dailySpendCents: 50,
+
+  /**
+   * Pages in ONE document.
+   *
+   * Distinct from `totalPages`, which is an account allowance: this one is a
+   * property of a single file, and it is enforced BEFORE the file is parsed
+   * rather than after. That ordering is the whole point. A PDF declares its
+   * page count in a dictionary that is read in milliseconds, while extracting
+   * the text of a 50,000-page file is minutes of CPU — so the count is checked
+   * the moment it is knowable and the parse never starts.
+   *
+   * 1,200 is comfortably above any document this product is for (the largest
+   * thing in the eval corpus is a few hundred blocks) and far below the size
+   * at which a single file becomes a way to spend the compute budget.
+   *
+   * Enforced in: `extractDocument` (src/lib/ingest/extract.ts), for PDFs from
+   * the page tree and for paginated formats from the block count. The account
+   * ceiling below still applies on top of it.
+   */
+  pagesPerDocument: 1_200,
+
+  /**
    * Bytes in a single upload. 25 MB.
    *
    * Enforced in: the Blob token's `maximumSizeInBytes`, where the STORE
@@ -152,6 +209,7 @@ export type LimitKey =
   | "documents"
   | "pages"
   | "messagesPerDay"
+  | "spendPerDay"
   | "uploadBytes"
   | "rate"
   | "freePool";
@@ -245,6 +303,34 @@ export function messageLimitNotice(
     limit,
     current,
     unit: "questions",
+    resetAt: resetAt.toISOString(),
+  };
+}
+
+/**
+ * The day's spend ceiling is reached.
+ *
+ * States the number rather than hiding behind "a limit was reached", because
+ * the whole value of this ceiling is that the person hitting it can see what it
+ * cost and decide whether that is right. Cents are formatted as dollars at the
+ * edge, like every other money value in the application, and never stored that
+ * way.
+ */
+export function spendLimitNotice(
+  currentCents: number,
+  resetAt: Date,
+): LimitNotice {
+  const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+  return {
+    key: "spendPerDay",
+    title: "Daily cost limit reached",
+    message:
+      `Answering questions for this account has cost ${dollars(currentCents)} today, ` +
+      `against a ceiling of ${dollars(LIMITS.dailySpendCents)}.`,
+    nextStep: `It resets at ${formatReset(resetAt)}. Your documents and past answers are unaffected.`,
+    limit: LIMITS.dailySpendCents,
+    current: currentCents,
+    unit: "cents",
     resetAt: resetAt.toISOString(),
   };
 }

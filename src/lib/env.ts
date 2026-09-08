@@ -62,8 +62,26 @@ const serverSchema = z
     BETTER_AUTH_URL: z.url(),
 
     // Vercel Blob. Uploads go client-side with a short-lived token minted from
-    // this one; file bytes never pass through an API route.
+    // this one; file bytes never pass through an API route on the way IN. On
+    // the way out they do: the store is configured for private access, so
+    // /api/documents/[documentId]/file reads with this token and streams the
+    // result behind the same ownership check as everything else.
     BLOB_READ_WRITE_TOKEN: z.string().min(1),
+
+    /**
+     * An origin that serves document files instead of Vercel Blob.
+     *
+     * Normally UNSET, and every real deployment leaves it that way.
+     *
+     * It exists for the end-to-end suite, which needs a real PDF the browser
+     * can fetch through this application without a Blob token — a secret CI
+     * does not have and should not need. Same rule as OPENROUTER_BASE_URL: an
+     * operator-configured override rather than an `if (isTest)`, so the route,
+     * the ownership check, the response headers and the viewer are all the
+     * shipping code path. See src/lib/blob.ts for the origin comparison and
+     * why it is parsed rather than prefix-matched.
+     */
+    BLOB_FIXTURE_ORIGIN: optional(z.url()),
 
     // Qdrant Cloud — embeddings plus a small payload.
     QDRANT_URL: z.url(),

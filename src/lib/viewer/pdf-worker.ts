@@ -70,6 +70,23 @@ export const PDF_OPTIONS = Object.freeze({
   cMapUrl: `${PDFJS_ASSET_ROOT}cmaps/`,
   cMapPacked: true,
   standardFontDataUrl: `${PDFJS_ASSET_ROOT}standard_fonts/`,
+  /*
+   * NO `eval`, EVER — and stated here rather than left to the CSP.
+   *
+   * PDF.js compiles a font's embedded charstring program into a JavaScript
+   * function when `eval` is available, which is faster for documents with
+   * unusual embedded fonts. The application's Content Security Policy does not
+   * grant `'unsafe-eval'` in production, so that path would be blocked anyway
+   * — but blocked at the CSP it fails as a caught exception and a console
+   * error on every affected page, and the fallback is only reached by way of a
+   * failure. Setting it here means the fallback is the CONFIGURED behaviour:
+   * PDF.js uses its interpreter from the start, renders identically, and logs
+   * nothing.
+   *
+   * The measurable cost is font rendering speed on documents with embedded
+   * Type 1 fonts, which is not where this viewer's time goes.
+   */
+  isEvalSupported: false,
 });
 
 /**

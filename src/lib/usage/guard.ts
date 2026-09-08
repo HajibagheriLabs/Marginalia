@@ -1,13 +1,20 @@
 import { and, eq, gte, isNull, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { conversations, documentPages, documents, messages } from "@/db/schema";
+import {
+  conversations,
+  documentPages,
+  documents,
+  messages,
+  usageEvents,
+} from "@/db/schema";
 import { dailyMessageLimitFor } from "@/lib/demo";
 import {
   LIMITS,
   documentLimitNotice,
   messageLimitNotice,
   pageLimitNotice,
+  spendLimitNotice,
   startOfNextUtcDay,
   startOfUtcDay,
   type LimitNotice,
@@ -252,6 +259,22 @@ export async function insertUserMessageWithinLimit(input: {
       throw new LimitError(messageLimitNotice(used, startOfNextUtcDay(), cap));
     }
 
+    /*
+     * THE MONEY CEILING, under the same lock and in the same transaction.
+     *
+     * Checked here rather than as a separate call from the chat route for the
+     * same reason the count above is: two questions sent together must not both
+     * pass a check that only one of them fits through. Sharing the transaction
+     * also means a question is never stored by a request that was about to be
+     * refused for cost.
+     *
+     * It sums the meter, not the messages, because the meter is where every
+     * kind of spend lands — completions today, and an embedding provider or a
+     * reranker that starts charging tomorrow. Counting completions alone would
+     * be a ceiling that quietly stops covering most of the bill.
+     */
+    await assertDailySpendAllowance(tx, input.userId, since);
+
     const [row] = await tx
       .insert(messages)
       .values({
@@ -263,6 +286,63 @@ export async function insertUserMessageWithinLimit(input: {
 
     return row.id;
   });
+}
+
+/* ========================================================================== *
+ * SPEND — a hard per-user ceiling, in integer cents, per UTC day
+ * ========================================================================== */
+
+/**
+ * Refuse the next question when today's metered spend has reached the ceiling.
+ *
+ * INERT ON THE SHIPPED CONFIGURATION and deliberately in the path anyway — see
+ * the commentary on `LIMITS.dailySpendCents` for why a ceiling written while it
+ * cannot bind is worth more than one written on the day it can.
+ *
+ * The comparison is `>=`, so the ceiling is a ceiling rather than something to
+ * be exceeded once. It is checked BEFORE the answer that would add to it, which
+ * means the last answer of the day may carry the total slightly past the limit;
+ * bounding it exactly would require knowing an answer's cost before generating
+ * it, which is not knowable. Refusing the NEXT question is the honest
+ * approximation, and it is the one that cannot be gamed by a single expensive
+ * call — that case is what the free-pool request counter and the `:free`
+ * enforcement in env.ts are for.
+ */
+export async function assertDailySpendAllowance(
+  tx: Pick<typeof db, "select">,
+  userId: string,
+  since: Date = startOfUtcDay(),
+): Promise<void> {
+  const [row] = await tx
+    .select({
+      spent: sql<number>`coalesce(sum(${usageEvents.costCents}), 0)::int`,
+    })
+    .from(usageEvents)
+    .where(
+      and(eq(usageEvents.userId, userId), gte(usageEvents.createdAt, since)),
+    );
+
+  const spent = row?.spent ?? 0;
+  if (spent >= LIMITS.dailySpendCents) {
+    throw new LimitError(spendLimitNotice(spent, startOfNextUtcDay()));
+  }
+}
+
+/** Metered cost, in integer cents, since UTC midnight. For the settings page. */
+export async function countSpendToday(userId: string): Promise<number> {
+  const [row] = await db
+    .select({
+      spent: sql<number>`coalesce(sum(${usageEvents.costCents}), 0)::int`,
+    })
+    .from(usageEvents)
+    .where(
+      and(
+        eq(usageEvents.userId, userId),
+        gte(usageEvents.createdAt, startOfUtcDay()),
+      ),
+    );
+
+  return row?.spent ?? 0;
 }
 
 /** Questions asked since UTC midnight. For the composer hint and settings. */

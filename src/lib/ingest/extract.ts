@@ -1,6 +1,8 @@
 import { extractText, getDocumentProxy } from "unpdf";
 import mammoth from "mammoth";
 
+import { LIMITS } from "@/lib/limits";
+
 /**
  * STAGE 1 OF INGESTION: TEXT EXTRACTION.
  *
@@ -109,7 +111,11 @@ export type ExtractionErrorCode =
   | "corrupt"
   | "no_pages"
   | "empty_document"
-  | "no_text_layer";
+  | "no_text_layer"
+  /** Refused before parsing: more pages than one document may hold. */
+  | "too_many_pages"
+  /** Parsing ran past its time box. See EXTRACTION_TIMEOUT_MS. */
+  | "timeout";
 
 export class ExtractionError extends Error {
   readonly code: ExtractionErrorCode;
@@ -118,6 +124,75 @@ export class ExtractionError extends Error {
     super(message);
     this.name = "ExtractionError";
     this.code = code;
+  }
+}
+
+/* ========================================================================== *
+ * THE TIME BOX
+ * ========================================================================== */
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ A MALICIOUS FILE MUST NOT BE ABLE TO HOLD A FUNCTION OPEN.               │
+ * │                                                                          │
+ * │ Everything above this line refuses a file it cannot READ. None of it     │
+ * │ refuses a file it can read FOREVER, and that is a different failure with │
+ * │ a different cost. A PDF is a small programming language: a content       │
+ * │ stream can nest transparency groups thousands deep, a page tree can be   │
+ * │ pathologically wide, and a DOCX is a ZIP whose declared sizes are a      │
+ * │ claim. None of those are corrupt — a parser works through them exactly   │
+ * │ as instructed, for as long as it takes.                                  │
+ * │                                                                          │
+ * │ Without a bound the outcomes are all bad and none of them are loud. The  │
+ * │ ingestion function burns its whole 300 s and is killed by the platform   │
+ * │ with no error written to the document row, so the upload sits at         │
+ * │ "extracting" forever and the "Retry" action starts the same 300 s again. │
+ * │ Twenty-five such files is the compute budget, spent by one account, and  │
+ * │ the only symptom is a slow app.                                          │
+ * │                                                                          │
+ * │ 45 SECONDS, AGAINST A 200 s PIPELINE BUDGET. Extraction is one of four   │
+ * │ stages and by far the least of them: a 300-page text-layer PDF parses in │
+ * │ single-digit seconds, and the budget is dominated by embedding. The      │
+ * │ number is chosen to be many times the slowest honest file and a small    │
+ * │ fraction of the invocation, so that when it fires it is a real answer    │
+ * │ about the file rather than a guess about the machine.                    │
+ * │                                                                          │
+ * │ WHAT THIS DOES NOT DO: it does not KILL the parse. JavaScript has no     │
+ * │ preemption, and unpdf's work is largely synchronous, so a parser wedged  │
+ * │ in a tight loop keeps that thread until it yields. What the timeout      │
+ * │ guarantees is that the pipeline stops WAITING — the document is failed   │
+ * │ with a message the user can act on, the state machine moves on, and the  │
+ * │ orphaned work dies with the invocation instead of defining it. A real    │
+ * │ kill needs a worker thread, which is a reasonable next step and is not   │
+ * │ free: it means moving the file bytes across a thread boundary.           │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+export const EXTRACTION_TIMEOUT_MS = 45_000;
+
+/**
+ * Resolve `work`, or throw an `ExtractionError` when the clock runs out.
+ *
+ * The timer is cleared on BOTH paths. An open `setTimeout` keeps a Node event
+ * loop alive, which in a serverless function is the difference between an
+ * invocation that ends and one that is billed until it is reaped.
+ */
+export async function withTimeout<T>(
+  work: Promise<T>,
+  ms: number,
+  message: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const expiry = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new ExtractionError("timeout", message));
+    }, ms);
+  });
+
+  try {
+    return await Promise.race([work, expiry]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -486,6 +561,21 @@ async function extractPdf(
     );
   }
 
+  /*
+   * THE PAGE CAP, CHECKED BEFORE A SINGLE PAGE IS PARSED.
+   *
+   * `numPages` comes from the document's page tree, which PDF.js has already
+   * read to get here — so this costs nothing and happens before the expensive
+   * part. Refusing after extraction would mean doing all of the work and then
+   * throwing it away, which is precisely the cost this exists to avoid.
+   */
+  if (pageCount > LIMITS.pagesPerDocument) {
+    throw new ExtractionError(
+      "too_many_pages",
+      `This PDF has ${pageCount.toLocaleString("en-US")} pages. The limit is ${LIMITS.pagesPerDocument.toLocaleString("en-US")} per document. Split it and upload the part you want to ask about.`,
+    );
+  }
+
   let rawPages: string[];
   try {
     const extracted = await extractText(proxy, { mergePages: false });
@@ -615,7 +705,9 @@ async function extractDocx(data: Uint8Array): Promise<ExtractionResult> {
     );
   }
 
-  const { text: assembled, pages } = assemblePages(paginateText(text));
+  const { text: assembled, pages } = assemblePages(
+    assertWithinPageCap(paginateText(text)),
+  );
   return {
     text: assembled,
     pages,
@@ -646,7 +738,9 @@ function extractPlainText(data: Uint8Array): ExtractionResult {
   // Markdown heading structure is left exactly as written: `## 7. Termination`
   // stays in the text, because the chunker builds its section breadcrumb from
   // those markers and the viewer renders them.
-  const { text: assembled, pages } = assemblePages(paginateText(text));
+  const { text: assembled, pages } = assemblePages(
+    assertWithinPageCap(paginateText(text)),
+  );
   return {
     text: assembled,
     pages,
@@ -654,6 +748,29 @@ function extractPlainText(data: Uint8Array): ExtractionResult {
     pageBoundaries: "synthetic",
     ocrUsed: false,
   };
+}
+
+/**
+ * The page cap, for the formats whose pages this module invents.
+ *
+ * A PDF declares its page count and is refused before parsing. A DOCX, TXT, or
+ * Markdown file has no such number until `paginateText` has produced the
+ * blocks, so the check lands here instead — after pagination, which is a linear
+ * scan over text already in memory, and before anything writes a row per block.
+ *
+ * The 25 MB upload cap already bounds this loosely (25 MB of text is roughly
+ * 8,000 blocks), so this is not the first line of defence. It exists so that
+ * one document cannot on its own consume the account's entire page allowance
+ * and leave the user unable to upload anything else without deleting it.
+ */
+function assertWithinPageCap(pages: string[]): string[] {
+  if (pages.length > LIMITS.pagesPerDocument) {
+    throw new ExtractionError(
+      "too_many_pages",
+      `This file is ${pages.length.toLocaleString("en-US")} blocks of text. The limit is ${LIMITS.pagesPerDocument.toLocaleString("en-US")} per document. Split it and upload the part you want to ask about.`,
+    );
+  }
+  return pages;
 }
 
 /* ========================================================================== *

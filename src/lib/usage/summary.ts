@@ -8,6 +8,7 @@ import { freePoolState } from "@/lib/rate-limit";
 
 import {
   countQuestionsToday,
+  countSpendToday,
   countUserDocuments,
   countUserPages,
 } from "./guard";
@@ -129,6 +130,16 @@ export interface LimitsReport {
   documents: LimitUsage;
   pages: LimitUsage;
   questions: LimitUsage;
+  /**
+   * The hard money ceiling, in integer cents.
+   *
+   * Reported even though it reads `0 / 50` on every account, because a limit
+   * the settings page does not name is a limit a user meets for the first time
+   * as a refusal. It is also the readout that would matter most on the day the
+   * model pool stops being free, which is precisely the day nobody thinks to
+   * add it.
+   */
+  spend: LimitUsage;
   uploadBytes: number;
   /**
    * The shared model quota. APP-WIDE, not per account, and counted in the
@@ -144,10 +155,11 @@ export interface LimitsReport {
 }
 
 export async function readLimitsReport(userId: string): Promise<LimitsReport> {
-  const [documents, pages, questions] = await Promise.all([
+  const [documents, pages, questions, spentCents] = await Promise.all([
     countUserDocuments(userId),
     countUserPages(userId),
     countQuestionsToday(userId),
+    countSpendToday(userId),
   ]);
 
   const pool = freePoolState();
@@ -173,6 +185,13 @@ export async function readLimitsReport(userId: string): Promise<LimitsReport> {
       limit: LIMITS.messagesPerDay,
       unit: "questions",
       note: "Resets at 00:00 UTC. Regenerating an answer does not count again.",
+    },
+    spend: {
+      label: "Cost today",
+      used: spentCents,
+      limit: LIMITS.dailySpendCents,
+      unit: "cents",
+      note: "Every model in the pool is a free variant, so this stays at zero. The ceiling is what stops it silently not staying there.",
     },
     uploadBytes: LIMITS.uploadBytes,
     freePool: {

@@ -1,12 +1,16 @@
 import { and, eq, isNull } from "drizzle-orm";
-import { get } from "@vercel/blob";
 
 import { db } from "@/db";
 import { documentPages, documents } from "@/db/schema";
-import { env } from "@/lib/env";
+import { readDocumentBlobBytes } from "@/lib/blob";
 import { LimitError, assertPageAllowance } from "@/lib/usage";
 
-import { ExtractionError, extractDocument } from "./extract";
+import {
+  EXTRACTION_TIMEOUT_MS,
+  ExtractionError,
+  extractDocument,
+  withTimeout,
+} from "./extract";
 import { StageError, type StageResult, type StageDeps } from "./stage";
 
 /**
@@ -39,36 +43,18 @@ import { StageError, type StageResult, type StageDeps } from "./stage";
  * the END of a PDF before it can read any page, so there is no useful streaming
  * path here. The 25 MB upload cap is what keeps this safe — it is also, not
  * coincidentally, what keeps the stage inside the memory a Vercel function has.
+ *
+ * The read itself lives in src/lib/blob.ts, shared with the route that serves
+ * the same file to the browser, because `access: "private"` plus the token is
+ * not a per-call-site choice — it is what makes a read work at all.
  */
 async function readBlob(url: string): Promise<Uint8Array> {
-  const result = await get(url, {
-    // The store is configured for private access, so a blob is not readable
-    // from its URL alone. Reads are authenticated with the read-write token.
-    access: "private",
-    token: env.BLOB_READ_WRITE_TOKEN,
-  });
-  if (!result || result.statusCode !== 200) {
+  const bytes = await readDocumentBlobBytes(url);
+  if (!bytes) {
     throw new ExtractionError(
       "corrupt",
       "The stored file could not be read back. Upload it again.",
     );
-  }
-
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  const reader = result.stream.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    total += value.length;
-  }
-
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
   }
   return bytes;
 }
@@ -106,13 +92,31 @@ export async function runExtraction(
   let result;
   try {
     const data = await readBlob(document.blobUrl);
-    result = await extractDocument({
-      data,
-      filename: document.filename,
-      mimeType: document.mimeType,
-      // No OCR provider is wired up. A scanned PDF is refused with a message
-      // that says so — see the OCR SEAM comment in extract.ts.
-    });
+    /*
+     * TIME-BOXED, because the file came off a stranger's disk.
+     *
+     * The box wraps the PARSE, not the blob read. A slow download is the
+     * network's problem and is already bounded by the 25 MB upload cap; a parse
+     * that never returns is the FILE's problem, and it is the one an attacker
+     * controls. Wrapping both would make a bad connection look like a malicious
+     * document, and the message this throws is shown to the person who uploaded
+     * it.
+     *
+     * See the commentary on EXTRACTION_TIMEOUT_MS for what this does and does
+     * not stop — in particular, that it bounds the WAIT rather than killing the
+     * work.
+     */
+    result = await withTimeout(
+      extractDocument({
+        data,
+        filename: document.filename,
+        mimeType: document.mimeType,
+        // No OCR provider is wired up. A scanned PDF is refused with a message
+        // that says so — see the OCR SEAM comment in extract.ts.
+      }),
+      EXTRACTION_TIMEOUT_MS,
+      "This file took too long to read and was stopped. It may be unusually complex or damaged — try re-exporting it, or splitting it into smaller files.",
+    );
   } catch (error) {
     // An ExtractionError carries a message written for the person who uploaded
     // the file. Anything else is a bug, and its text must not be shown — the

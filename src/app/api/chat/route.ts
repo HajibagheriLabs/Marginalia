@@ -1,6 +1,7 @@
 import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
 import { z } from "zod";
 
+import { db } from "@/db";
 import { requireConversationAccess } from "@/lib/auth-server";
 import { titleFromQuestion } from "@/lib/chat/title";
 import { toUITraceRow } from "@/lib/chat/trace";
@@ -17,7 +18,11 @@ import {
 } from "@/lib/limits";
 import { answer } from "@/lib/llm";
 import { freePoolState, release, take } from "@/lib/rate-limit";
-import { LimitError, insertUserMessageWithinLimit } from "@/lib/usage";
+import {
+  LimitError,
+  assertDailySpendAllowance,
+  insertUserMessageWithinLimit,
+} from "@/lib/usage";
 
 /**
  * THE CONVERSATION ENDPOINT.
@@ -48,15 +53,20 @@ import { LimitError, insertUserMessageWithinLimit } from "@/lib/usage";
  * by sending a different array here.
  *
  * ───────────────────────────────────────────────────────────────────────────
- * THREE CEILINGS, CHECKED BEFORE THE STREAM OPENS
+ * FOUR CEILINGS, CHECKED BEFORE THE STREAM OPENS
  *
  *   1. A TOKEN BUCKET per user, so a loop cannot hammer the endpoint.
  *   2. THE DAILY QUESTION LIMIT, enforced by the same transaction that stores
  *      the question — see `insertUserMessageWithinLimit`.
- *   3. THE SHARED FREE-TIER MODEL QUOTA, ~20/min and 50/day across the whole
+ *   3. THE DAILY SPEND CEILING, in integer cents, from the same transaction.
+ *      A count of questions is not a bound on money: one call to an expensive
+ *      model with a long context can cost more than a thousand small ones. It
+ *      cannot bind on the shipped free pool, and it is in the path anyway —
+ *      see `LIMITS.dailySpendCents`.
+ *   4. THE SHARED FREE-TIER MODEL QUOTA, ~20/min and 50/day across the whole
  *      app rather than per user.
  *
- * All three refuse with a 429 carrying a `LimitNotice`, and the pane opens a
+ * All four refuse with a 429 carrying a `LimitNotice`, and the pane opens a
  * dialog naming the exact ceiling and the way out. They are checked HERE, up
  * front, rather than inside the stream, for one reason: once a
  * `text/event-stream` response has started, the only way to report anything is
@@ -121,7 +131,7 @@ export async function POST(request: Request): Promise<Response> {
     return refuse(rateLimitNotice("questions", rate.resetAt));
   }
 
-  /* ── 2. THE DAILY QUESTION LIMIT ──────────────────────────────────────── */
+  /* ── 2 & 3. THE DAILY QUESTION LIMIT AND THE DAILY SPEND CEILING ──────── */
   if (trigger === "submit-message") {
     try {
       // Counts and inserts in ONE transaction under a per-user advisory lock,
@@ -146,12 +156,30 @@ export async function POST(request: Request): Promise<Response> {
       conversation.id,
       titleFromQuestion(question),
     );
+  } else {
+    /*
+     * A `regenerate-message` deliberately skips the COUNT. The question is
+     * already stored and was already paid for; retrying an answer that failed
+     * is not a second question.
+     *
+     * IT DOES NOT SKIP THE MONEY CEILING. A retry is a second model call and
+     * costs whatever the first one would have, so the spend check that rides
+     * inside the insert above is repeated on the branch that does not insert.
+     * Without this, "regenerate" would be an unbounded way past the one limit
+     * denominated in money.
+     */
+    try {
+      await assertDailySpendAllowance(db, user.id);
+    } catch (error) {
+      if (error instanceof LimitError) {
+        release("chat", user.id);
+        return refuse(error.notice);
+      }
+      throw error;
+    }
   }
-  // A `regenerate-message` deliberately skips the count. The question is
-  // already stored and was already paid for; retrying an answer that failed is
-  // not a second question.
 
-  /* ── 3. THE SHARED FREE-TIER MODEL QUOTA ──────────────────────────────── */
+  /* ── 4. THE SHARED FREE-TIER MODEL QUOTA ──────────────────────────────── */
   //
   // Read-only here. The slots are actually TAKEN inside the answer engine, once
   // per model attempt, because failover makes more than one request per

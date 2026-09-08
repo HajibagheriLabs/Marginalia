@@ -31,6 +31,16 @@ import type {
  * than guesswork. See `anchors.ts`.
  */
 
+/**
+ * Where the browser fetches a document's original bytes.
+ *
+ * Root-relative, so it resolves identically under `next dev`, `next start`, and
+ * a deployment, and so the request carries the session cookie.
+ */
+export function documentFileUrl(documentId: string): string {
+  return `/api/documents/${documentId}/file`;
+}
+
 /** The one place a mime type becomes a rendering decision. */
 export function viewerKindFor(mimeType: string): ViewerKind {
   return mimeType === "application/pdf" ? "pdf" : "text";
@@ -105,8 +115,18 @@ export async function loadDocumentView(
     byteSize: document.byteSize,
     kind,
     boundaries: boundariesFor(document.mimeType),
-    fileUrl: kind === "pdf" ? document.blobUrl : null,
-    downloadUrl: document.blobUrl,
+    /*
+     * NEVER `document.blob_url`.
+     *
+     * The blob store is private, so that URL is not fetchable by a browser at
+     * all — and even if it were, it is a bearer capability with no session
+     * behind it and no way to revoke it. Both the viewer and the download link
+     * go through a route on this origin that re-checks ownership on every
+     * request and serves the bytes as an attachment. See
+     * src/app/api/documents/[documentId]/file/route.ts.
+     */
+    fileUrl: kind === "pdf" ? documentFileUrl(document.id) : null,
+    downloadUrl: documentFileUrl(document.id),
     // `page_count` is the extractor's number and the pages are the rows it
     // wrote; they agree, but the rows are what is actually rendered, so they
     // are what the count is taken from.

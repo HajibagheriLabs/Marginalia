@@ -3,7 +3,7 @@ import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
 import { loadEnvFile } from "./src/lib/env.file";
-import { modelStubUrl } from "./e2e/support/model-stub";
+import { FIXTURE_PORT, modelStubUrl } from "./e2e/support/model-stub";
 
 /**
  * THE BROWSER SUITE.
@@ -87,6 +87,17 @@ export default defineConfig({
        * shipping code. Only the socket on the far end is ours.
        */
       OPENROUTER_BASE_URL: modelStubUrl(),
+      /*
+       * THE SECOND ONE, AND THE LAST.
+       *
+       * Points the document-file route at the fixture server instead of Vercel
+       * Blob, so the viewer can fetch a real PDF through the real route without
+       * a Blob token — a secret CI does not have and should not need. Same
+       * shape as the line above: an override, not a branch. The route's
+       * ownership check, its response headers, the CSP and the viewer are all
+       * exactly what ships.
+       */
+      BLOB_FIXTURE_ORIGIN: `http://127.0.0.1:${FIXTURE_PORT}`,
       NEXT_PUBLIC_APP_URL: baseURL,
       BETTER_AUTH_URL: baseURL,
     },

@@ -10,8 +10,10 @@
  */
 export { LimitError } from "./guard";
 export {
+  assertDailySpendAllowance,
   assertPageAllowance,
   countQuestionsToday,
+  countSpendToday,
   countUserDocuments,
   countUserPages,
   insertDocumentWithinLimit,

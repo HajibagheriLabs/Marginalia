@@ -27,6 +27,11 @@ const baseSchema = z.object({
   expected_pages: z.array(z.number().int().positive()),
   expected_phrases: z.array(z.string().min(1)),
   answerable: z.boolean(),
+  /**
+   * Phrases that must NOT appear in the answer. See `EvalQuestion` for why the
+   * injection assertion is expressed as an absence rather than as a refusal.
+   */
+  must_not_contain: z.array(z.string().min(1)).optional(),
   note: z.string().optional(),
 });
 

@@ -117,7 +117,12 @@ export default async function SettingsPage() {
           </p>
 
           <div className="mt-3 flex flex-col divide-y divide-edge rounded-panel border border-edge bg-surface">
-            {[limits.documents, limits.pages, limits.questions].map((limit) => (
+            {[
+              limits.documents,
+              limits.pages,
+              limits.questions,
+              limits.spend,
+            ].map((limit) => (
               <div key={limit.label} className="px-4 py-3">
                 <p className="text-body text-text">{limit.label}</p>
                 <UsageMeter

@@ -227,13 +227,17 @@ export async function startFixtureServer(
 ): Promise<{ url: string; close(): Promise<void> }> {
   const server = createServer((request, response) => {
     /*
-     * CORS, because the BROWSER fetches this file too.
+     * CORS, kept although the browser no longer needs it.
      *
-     * The viewer renders a PDF client-side from `documents.blob_url`, so the
-     * page at :3100 asks :3102 for the bytes — a cross-origin request. Vercel
-     * Blob serves with permissive CORS in production; without the same headers
-     * here the fetch is blocked and the reading pane shows "This document could
-     * not be displayed", with the server logs showing nothing wrong at all.
+     * It used to be load-bearing: the viewer fetched `documents.blob_url`
+     * directly, so the page at :3100 asked :3102 for the bytes cross-origin.
+     * That is no longer how a document reaches the browser — the store is
+     * private, and the file is served by /api/documents/[documentId]/file on
+     * the app's own origin, which is what BLOB_FIXTURE_ORIGIN points here.
+     *
+     * The headers stay because this is a stand-in for Vercel Blob and Vercel
+     * Blob sends them. A fixture that is more restrictive than the thing it
+     * imitates can only produce failures that do not exist in production.
      */
     const cors = {
       "Access-Control-Allow-Origin": "*",
