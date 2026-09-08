@@ -65,7 +65,7 @@ export function ForgotPasswordForm() {
     <>
       <AuthHeader
         title="Reset your password"
-        description="Enter your address and we'll send a link to set a new password."
+        description="Enter your address to get a link for setting a new password."
       />
       <AuthError message={error} />
 

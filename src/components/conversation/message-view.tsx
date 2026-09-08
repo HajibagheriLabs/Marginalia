@@ -88,6 +88,65 @@ export function MessageView({
   );
 }
 
+/**
+ * THE ANSWER, ANNOUNCED ONCE, WHEN IT IS FINISHED.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * WHY THE LIVE REGION IS NOT ON THE ANSWER ITSELF
+ *
+ * The obvious implementation puts `aria-live="polite"` on the streaming text
+ * and is unusable. A polite region announces its content EVERY TIME IT
+ * CHANGES, and this content changes once per token — so a screen reader
+ * queues a hundred overlapping announcements, each one the whole answer so
+ * far, and the reader hears the first sentence a hundred times before the
+ * paragraph finishes. It is worse than no announcement at all, because it also
+ * blocks everything else the user might want to hear.
+ *
+ * So the live region is a SEPARATE, EMPTY, visually hidden node that stays
+ * empty for the whole stream and receives the finished text exactly once, when
+ * `streaming` goes false. One announcement, of the complete answer, at the
+ * moment there is something worth reading.
+ *
+ * The region is present in the DOM from the start rather than mounted at the
+ * end, because a live region that appears already populated is not announced —
+ * the technology watches for CHANGES inside an existing region.
+ *
+ * Sighted readers lose nothing: they can already see the text arriving, which
+ * is what the streaming animation is for.
+ */
+function AnswerAnnouncement({
+  text,
+  streaming,
+}: {
+  text: string;
+  streaming: boolean;
+}) {
+  /*
+   * DERIVED DURING RENDER, not synchronised in an effect.
+   *
+   * Empty for the whole stream, the finished text afterwards — which is one
+   * content change inside an existing live region, which is exactly one
+   * announcement. Going back to empty when the next answer starts streaming
+   * announces nothing (a region emptying is not news) and leaves the region
+   * ready to change again, so a second question is announced like the first.
+   *
+   * MARKERS ARE SPOKEN, NOT READ OUT AS PUNCTUATION. The stored text carries
+   * `[1]`, which a screen reader renders as "left bracket one right bracket" —
+   * noise in the middle of every sentence, and it does not say what the bracket
+   * MEANS. "(citation 1)" is the same fact in words, and the chip itself is
+   * still in the tab order announcing its document and page.
+   */
+  const spoken = streaming
+    ? ""
+    : text.replace(/\[(\d{1,3})\]/g, (_match, marker) => `(citation ${marker})`);
+
+  return (
+    <p role="status" aria-live="polite" className="sr-only">
+      {spoken}
+    </p>
+  );
+}
+
 function AssistantMessage({
   message,
   inkFor,
@@ -127,7 +186,16 @@ function AssistantMessage({
   if (streaming && body.length === 0) return <MessageSkeleton />;
 
   return (
-    <div data-role="assistant" className="flex flex-col gap-3">
+    <div
+      data-role="assistant"
+      // `aria-busy` while the tokens are arriving, so assistive technology knows
+      // the subtree is mid-update and does not read a half-written sentence as
+      // if it were finished.
+      aria-busy={streaming || undefined}
+      className="flex flex-col gap-3"
+    >
+      <AnswerAnnouncement text={body} streaming={streaming} />
+
       <AnswerMarkdown
         className="measure"
         text={body}
@@ -161,6 +229,35 @@ function AssistantMessage({
           );
         }}
       />
+
+      {/*
+        AN ANSWER WITH NO CITATIONS SAYS SO.
+
+        It happens for two quite different reasons and the reader cannot tell
+        them apart from the text alone: retrieval found nothing above the floor
+        (in which case the answer is the "nothing in these documents covers
+        that" sentence and no model was called), or a model was given passages
+        and wrote a paragraph without attaching a marker to anything.
+
+        The second is the one worth naming. It looks exactly like a normal
+        answer — fluent, plausible, and resting on nothing the reader can check
+        — and silence about it is the interface implying a grounding it does
+        not have. The trace below is the action: it shows what WAS retrieved,
+        which is the only way to find out whether the passages were there and
+        went uncited.
+
+        Suppressed when there were no candidates at all, because then the
+        answer's own first sentence already says it.
+      */}
+      {!streaming &&
+      citationPart &&
+      citationPart.citations.length === 0 &&
+      (tracePart?.rows.length ?? 0) > 0 ? (
+        <p className="measure text-body-sm text-text-faint">
+          This answer cites no passages. Open the retrieval below to see what
+          was found.
+        </p>
+      ) : null}
 
       {/* Both appear only once the answer has finished. A trace table sliding
           in under text that is still moving would be the second animation in a

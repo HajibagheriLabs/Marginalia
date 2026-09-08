@@ -16,7 +16,11 @@ export default function AuthLayout({
 }) {
   return (
     <div className="flex min-h-full flex-1 flex-col items-center justify-center px-5 py-14">
-      <div className="w-full max-w-[400px]">
+      {/* A `main` landmark, so "skip to the form" works and the page is not one
+          undifferentiated region to a screen reader. The wordmark link sits
+          inside it rather than in a `header`: on a page whose whole content is
+          one card, a banner landmark holding a single link is noise. */}
+      <main className="w-full max-w-[400px]">
         <Link
           href="/"
           className="mb-6 inline-block rounded-control text-page-title font-semibold text-text"
@@ -27,7 +31,7 @@ export default function AuthLayout({
         <div className="rounded-panel border border-edge bg-surface p-6">
           {children}
         </div>
-      </div>
+      </main>
     </div>
   );
 }

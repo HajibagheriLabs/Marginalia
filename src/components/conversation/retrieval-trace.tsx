@@ -90,7 +90,22 @@ export function RetrievalTrace({
             </p>
           ) : (
             <>
-              <div className="overflow-x-auto rounded-panel border border-edge bg-surface">
+              {/*
+                A SCROLL REGION NEEDS TO BE REACHABLE BY KEYBOARD.
+
+                The table is wider than the conversation pane on every screen
+                and much wider on a phone, so it scrolls sideways — and a
+                scrollable box that cannot take focus is a box a keyboard user
+                cannot scroll. `tabIndex={0}` puts it in the tab order and the
+                arrow keys then work; `role="region"` plus a name is what stops
+                it being an unlabelled stop on the way to the next answer.
+              */}
+              <div
+                role="region"
+                aria-label="Retrieval trace, scrollable"
+                tabIndex={0}
+                className="focus-ring overflow-x-auto rounded-panel border border-edge bg-surface"
+              >
                 <table className="w-full border-collapse text-mono-xs">
                   <thead>
                     <tr className="border-b border-edge">

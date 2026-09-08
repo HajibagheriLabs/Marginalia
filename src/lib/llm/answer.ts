@@ -205,6 +205,14 @@ export async function* answer(
   let served: string | null = null;
   let text = "";
   let announced = false;
+  /**
+   * True once a model has put text on the reader's screen.
+   *
+   * Survives the loop because the two ways generation can fail need two
+   * different sentences, and after the loop there is nothing else to tell them
+   * apart. See the branch below.
+   */
+  let streamedPartially = false;
   const failures: unknown[] = [];
 
   for (const modelId of pool) {
@@ -256,6 +264,7 @@ export async function* answer(
           announced = true;
         }
         emitted = true;
+        streamedPartially = true;
         text += delta;
         yield { type: "text", delta };
       }
@@ -308,6 +317,38 @@ export async function* answer(
   }
 
   if (served === null) {
+    /*
+     * TWO DIFFERENT FAILURES, TWO DIFFERENT SENTENCES.
+     *
+     * A stream that produced tokens and then stopped is NOT an exhausted pool.
+     * Failover was declined on purpose — the text is already on screen and
+     * restarting on another model would duplicate or replace it mid-sentence —
+     * so exactly one model was tried, and it worked until it did not.
+     *
+     * Reporting that as `poolFailureMessage` was wrong in both directions: it
+     * logged "every model in the pool failed" when most had not been asked, and
+     * it told the READER to go and check OPENROUTER_MODEL and
+     * OPENROUTER_FALLBACK_MODELS — operator instructions, in a chat pane, for a
+     * transient drop whose actual remedy is the retry button already next to it.
+     *
+     * The partial text is deliberately not persisted, which is why the sentence
+     * says "ask again" rather than "reload": there is nothing to come back to.
+     */
+    if (streamedPartially) {
+      console.warn(
+        `[llm] ${pool[0]} stopped partway through an answer; no failover once tokens have shipped`,
+        failures.map((error) =>
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
+      yield {
+        type: "error",
+        message:
+          "That answer stopped partway through and was not saved. Ask again to start over.",
+      };
+      return;
+    }
+
     const message = poolFailureMessage(classifyFailure(failures));
     console.error(
       `[llm] every model in the pool failed (${pool.join(", ")})`,

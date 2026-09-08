@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
 
 import { E2E_DOCUMENT } from "./support/fixture";
+import { modelStubUrl, STUB_CONTROL_PATH } from "./support/model-stub";
 import { CONTEXT_PATH, type E2EContext } from "./global-setup";
 
 /**
@@ -185,4 +186,64 @@ test("sign in, ask a question, and follow the citation to the page", async ({
       page.getByText(E2E_DOCUMENT.answeringPhrase).first(),
     ).toBeInViewport({ timeout: 20_000 });
   });
+});
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ A STREAM THAT FAILS HALFWAY MUST SAY SO.                                 │
+ * │                                                                          │
+ * │ This is its own test because it is the failure the AI SDK makes easy to  │
+ * │ get wrong. `fullStream` yields an `{type:"error"}` part and then          │
+ * │ COMPLETES NORMALLY — it does not throw — so a `try/catch` around          │
+ * │ `textStream` never fires. The symptom is not an error page: it is half a │
+ * │ sentence on screen, the caret gone, and no way to tell whether more is   │
+ * │ coming. A reader waits, then reloads, and loses the thread.              │
+ * │                                                                          │
+ * │ The stub is asked to start well and then drop, which is what an          │
+ * │ overloaded free model actually does.                                     │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ */
+test("a mid-stream failure surfaces in the thread with a retry", async ({
+  page,
+}) => {
+  await page.goto("/sign-in");
+  await page.locator("#email").fill(context.email);
+  await page.locator("#password").fill(context.password);
+  await page.getByRole("button", { name: /sign in/i }).click();
+  await page.waitForURL(/\/app(\/|$)/, { timeout: 30_000 });
+
+  await page.goto(`/app/documents/${context.documentId}`);
+
+  const composer = page.getByRole("textbox", { name: /ask a question/i });
+  await expect(composer).toBeEnabled({ timeout: 30_000 });
+
+  // Arm the failure out of band, then ask the question the happy path asks —
+  // one that is known to retrieve, so the model is genuinely called.
+  const armed = await fetch(
+    modelStubUrl().replace("/api/v1", "") + STUB_CONTROL_PATH,
+    { method: "POST" },
+  );
+  expect(armed.ok).toBe(true);
+
+  await composer.fill(E2E_DOCUMENT.question);
+  await page.getByRole("button", { name: /send question/i }).click();
+
+  // THE ERROR IS ON SCREEN, as an alert, next to the answer it interrupted.
+  // The partial answer stays on screen — the reader can see where it stopped.
+  await expect(page.getByText(/Either party may/i).first()).toBeVisible({
+    timeout: 60_000,
+  });
+
+  const alert = page.getByRole("alert").filter({ hasText: /stopped partway/i });
+  await expect(alert).toBeVisible({ timeout: 60_000 });
+
+  // AND IT OFFERS THE WAY OUT. A stalled stream with no control is the bug;
+  // a stalled stream with a retry is a bad minute.
+  await expect(
+    alert.getByRole("button", { name: /try again/i }),
+  ).toBeVisible();
+
+  // The composer is usable again rather than stuck in a sending state — the
+  // other half of "not a silent stall".
+  await expect(composer).toBeEnabled({ timeout: 20_000 });
 });

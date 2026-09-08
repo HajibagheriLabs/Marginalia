@@ -55,6 +55,28 @@ export interface ModelStub {
   close(): Promise<void>;
 }
 
+/**
+ * ARMING A MID-STREAM FAILURE.
+ *
+ * The AI SDK does not throw provider errors out of the stream iterator: it
+ * yields an `{type:"error"}` part and then COMPLETES NORMALLY. A caller that
+ * only wraps `textStream` in try/catch therefore sees a short, cheerful,
+ * truncated answer and no error at all — which reaches the reader as a stall
+ * with half a sentence on screen and no way to tell whether more is coming.
+ *
+ * The failure is armed OUT OF BAND, by POSTing to this path, rather than by a
+ * trigger phrase inside the question. The first attempt did use a phrase, and
+ * it never reached the stub at all: the extra words dragged the query's
+ * embedding far enough that nothing cleared the relevance floor, so the app
+ * correctly answered "nothing in this document covers that" WITHOUT calling a
+ * model. The test passed through a path it was not testing.
+ *
+ * A control channel keeps the question realistic — the same one the happy path
+ * asks, which is known to retrieve — and makes the failure deterministic
+ * instead of dependent on how a sentence embeds.
+ */
+export const STUB_CONTROL_PATH = "/__control/fail-next-stream";
+
 /** `[3]` etc., as `buildContext` numbers the passages it hands over. */
 function markersInPrompt(prompt: string): number[] {
   const found = new Set<number>();
@@ -80,8 +102,16 @@ function chunk(delta: Record<string, unknown>): string {
 
 export async function startModelStub(port: number): Promise<ModelStub> {
   const prompts: string[] = [];
+  /** Armed by the control path, and spent by the next completion. */
+  let failNextStream = false;
 
   const server = createServer((request, response) => {
+    if (request.url?.startsWith(STUB_CONTROL_PATH)) {
+      failNextStream = true;
+      response.writeHead(200, { "Content-Type": "text/plain" }).end("armed");
+      return;
+    }
+
     if (!request.url?.includes("/chat/completions")) {
       response.writeHead(404).end();
       return;
@@ -91,6 +121,9 @@ export async function startModelStub(port: number): Promise<ModelStub> {
     request.on("data", (piece) => (body += piece));
     request.on("end", () => {
       let sentence = "The stub could not read the passages it was given.";
+      // Read and cleared here, so one arming produces exactly one failure.
+      const failMidStream = failNextStream;
+      failNextStream = false;
 
       try {
         const parsed = JSON.parse(body) as {
@@ -128,6 +161,27 @@ export async function startModelStub(port: number): Promise<ModelStub> {
       // Word by word, so the client's streaming path is exercised rather than
       // a single-chunk special case that would hide a buffering bug.
       response.write(chunk({ role: "assistant", content: "" }));
+
+      if (failMidStream) {
+        // Enough text to prove the stream really started, then an upstream
+        // error in the shape OpenRouter sends one. The app must surface this,
+        // not silently stop.
+        response.write(chunk({ content: "Either party may " }));
+        response.write(
+          `data: ${JSON.stringify({
+            error: {
+              message: "upstream model dropped the connection",
+              type: "server_error",
+              code: 502,
+            },
+          })}
+
+`,
+        );
+        response.end();
+        return;
+      }
+
       for (const word of sentence.split(" ")) {
         response.write(chunk({ content: `${word} ` }));
       }

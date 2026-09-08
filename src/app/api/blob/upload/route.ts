@@ -232,7 +232,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     console.error("[upload] token request failed", error);
     return NextResponse.json(
-      { error: "The upload could not start. Try again." },
+      { error: "The upload failed. Try again." },
       { status: 400 },
     );
   }

@@ -28,7 +28,7 @@
   --edge-strong: oklch(93.67% 0.012 223.53 / 0.18); /* #E2ECF0 @18%                      */
   --text: oklch(93.33% 0.0076 228.86); /* #E4EAED                           */
   --text-muted: oklch(70.89% 0.0162 235.49); /* #98A3AA                           */
-  --text-faint: oklch(55.56% 0.0171 235.61); /* #6A757C                           */
+  --text-faint: oklch(63.13% 0.0139 236.76); /* #828B91  AA on all three grounds  */
 }
 
 /* --- ROOM: light --------------------------------------------------------- */
@@ -40,7 +40,7 @@
   --edge-strong: oklch(81.6% 0.0104 164.81); /* #BDC5C1 */
   --text: oklch(20.57% 0.0073 229.27); /* #14181A */
   --text-muted: oklch(49.36% 0.0167 238.3); /* #59636A */
-  --text-faint: oklch(66.07% 0.0156 238.14); /* #8A949B */
+  --text-faint: oklch(51.83% 0.0136 231.86); /* #616A6F  AA on all three grounds */
 }
 
 /* --- PAPER (INVARIANT) ---------------------------------------------------
@@ -72,6 +72,28 @@
   --warn: oklch(70.15% 0.133 61.96); /* #D98A3C */
   --danger: oklch(66.18% 0.1509 27.26); /* #E0695E */
 
+  /* --- CONTRAST: MEASURED, NOT EYEBALLED -----------------------------------
+     Every value above and below clears WCAG AA (4.5:1) for normal text against
+     every ground it can land on in its own theme. That is checked rather than
+     assumed, and three of them had to move to make it true:
+
+       --text-faint  dark   #6A757C -> #828B91   was 3.33 on --surface-raised
+       --text-faint  light  #8A949B -> #616A6F   was 2.53 on --room
+       --ok/--warn/--danger, light                were 2.17 / 2.48 / 2.99
+
+     The last one is the important one. These three are SYSTEM STATES and they
+     are used as real text — the upload queue's error line, the demo banner, the
+     destructive menu item, the auth form's error. A hue picked to read well on
+     a dark ground is far too light on a pale one, so the light room needs its
+     own set rather than inheriting. Same hue, same meaning, enough luminance
+     contrast to be readable.
+
+     --text-faint is not decoration either: it carries the `label` utility at
+     11px/600 and every mono-xs number in the trace table. Small, semibold text
+     is still normal text under WCAG — the large-text exemption starts at 18.66px
+     bold — so 4.5 is the bar it has to clear, not 3.
+     ---------------------------------------------------------------------- */
+
   /* --- DEPTH: exactly two shadows, both physically justified -------------- */
   --shadow-sheet: 0 1px 2px oklch(0% 0 0 / 0.3), 0 10px 28px -8px oklch(0% 0 0 / 0.45);
   --shadow-overlay: 0 2px 8px oklch(0% 0 0 / 0.32), 0 12px 36px -10px oklch(0% 0 0 / 0.5);
@@ -95,6 +117,24 @@
      ---------------------------------------------------------------------- */
   --highlight-bg-color: color-mix(in oklch, var(--text-faint) 26%, transparent);
   --highlight-selected-bg-color: color-mix(in oklch, var(--text-faint) 55%, transparent);
+}
+
+/* --- SYSTEM STATES, RE-TUNED FOR THE PALE ROOM ----------------------------
+   DECLARED AFTER the block above, and that ordering is load-bearing. `:root`
+   and `.light` have IDENTICAL specificity — a pseudo-class and a class are both
+   (0,1,0) — so whichever comes last in the file wins. Put these up with the
+   other light-room tokens and the `:root` defaults below them would silently
+   win, which looks exactly like the override never having been written.
+
+   Only the three SYSTEM STATES are theme-aware. The four highlighter inks
+   deliberately are NOT: they land on the paper sheet, which is invariant, and
+   an ink that changed with the room would break the one thing the colour system
+   promises — that a citation looks the same wherever it is.
+   ------------------------------------------------------------------------- */
+.light {
+  --ok: oklch(51.04% 0.078 160.44); /* #397457 */
+  --warn: oklch(52.33% 0.0964 62.2); /* #915C28 */
+  --danger: oklch(53.28% 0.1178 27.04); /* #A64E46 */
 }
 
 /* =========================================================================

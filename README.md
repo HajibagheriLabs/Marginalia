@@ -208,7 +208,7 @@ so a failure names the thing that broke:
 | **P3**   | Re-running any ingestion stage duplicates nothing                  | `npm run test:p3`          |
 | **P4**   | Fusion, filters, and the two search channels rank correctly        | `npm run test:p4`          |
 |          | Chunking, offsets, marker parsing, RRF maths, pricing, limits      | `npm run test:unit`        |
-|          | One happy path in a browser                                        | `npm run test:e2e`         |
+|          | Browser: happy path, axe in both themes, four breakpoints, virtualisation | `npm run test:e2e`  |
 
 `npm test` runs everything. Coverage is not the goal: a test earns its place by
 failing when a specific guarantee breaks.
@@ -220,8 +220,12 @@ services, and a mock would only assert that the mock agreed with the test. They
 **fail** when they are absent in CI, because a skipped suite reports green.
 `SKIP_MODEL_TESTS=1` skips everything that loads a model.
 
-The end-to-end suite signs in, opens a document that went through the real
+The browser suite signs in, opens a document that went through the real
 pipeline, asks a question, and follows the citation to the highlighted passage.
+It also runs axe (WCAG 2.1 A + AA) over the landing page, sign-in and the
+workspace in both themes, checks the layout at 390 / 768 / 1024 / 1440, proves a
+mid-stream model failure surfaces with a retry rather than stalling, and asserts
+that a 300-page document mounts a window rather than 300 pages.
 The model is a local stub speaking the chat-completions SSE format, pointed at
 by `OPENROUTER_BASE_URL` — so the answer is deterministic and free while the
 pool, failover, streaming and citation validation are all the shipping code.

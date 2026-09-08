@@ -284,7 +284,31 @@ export function useVirtualPages({
     return () => {
       element.removeEventListener("scroll", onScroll);
       observer.disconnect();
-      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+
+      /*
+       * CANCEL THE FRAME **AND CLEAR THE GUARD**.
+       *
+       * `frameRef` is the "a sync is already queued" flag, and `onScroll`
+       * returns early whenever it is set. Cancelling the frame without
+       * clearing it leaves the flag stuck on forever: the callback that would
+       * have reset it never runs, so every subsequent scroll returns early and
+       * the window stops moving. The document keeps scrolling — the stack is
+       * full height — but no new pages are ever mounted, so the reader scrolls
+       * into blank paper and the page counter stays on 1.
+       *
+       * This effect re-subscribes whenever `sync` changes, and `sync` changes
+       * every time a page reports its measured height — so on a long document
+       * the race is not rare, it is the normal case: scroll, a height lands,
+       * cleanup cancels the pending frame, and the viewer is dead from then on.
+       *
+       * Invisible on a short document, where the first window already holds
+       * every page. Measured on a 300-page one: scrollTop reached 49,466 of
+       * 50,102 while pages 1, 2 and 3 were still the only ones mounted.
+       */
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+      }
     };
   }, [scrollRef, sync]);
 

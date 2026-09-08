@@ -228,8 +228,10 @@ jobs:
         run: npm run db:migrate
 
       # playwright.config.ts owns the build, the web server on 3100, the model
-      # stub and the fixture ingestion.
-      - name: Run the happy path
+      # stub and the fixture ingestion. One invocation runs all four browser
+      # specs — the happy path, axe in both themes, the four breakpoints, and
+      # virtualisation over 300 pages — because they share one expensive setup.
+      - name: Run the browser suite
         run: npm run test:e2e
 
       - uses: actions/upload-artifact@v4

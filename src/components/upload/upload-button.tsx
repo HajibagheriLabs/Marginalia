@@ -35,6 +35,17 @@ export function UploadButton({
         type="file"
         multiple
         accept={ACCEPT_ATTRIBUTE}
+        /*
+         * NAMED, even though it is `sr-only` and `tabIndex={-1}`.
+         *
+         * The visible control is the button below, which opens this input by
+         * clicking it — so nobody ever reaches this element by tab or reads it
+         * aloud. Assistive technology still enumerates it, and an unnamed form
+         * control is a critical axe violation regardless of whether it is
+         * focusable. One attribute, and the tree stops carrying a nameless
+         * input around.
+         */
+        aria-label="Choose documents to upload"
         className="sr-only"
         tabIndex={-1}
         onChange={(event) => {

@@ -39,14 +39,71 @@ function DialogOverlay({
   );
 }
 
+/**
+ * RESTORE FOCUS TO WHATEVER OPENED THE DIALOG.
+ *
+ * Radix returns focus to its `DialogTrigger` on close. Every dialog in this
+ * application is CONTROLLED — opened by a state change rather than by a
+ * trigger, because the limit dialog opens in response to a failed request and
+ * has no trigger at all — so `triggerRef` is null and focus falls to `<body>`.
+ * Measured, not assumed.
+ *
+ * For a keyboard or screen-reader user that is the difference between closing a
+ * confirmation and carrying on, and closing a confirmation and being returned
+ * to the top of the document with everything to tab through again.
+ *
+ * So the element that had focus when the dialog opened is captured on mount and
+ * focused on close. If it has since been removed from the document — a menu
+ * item inside a dropdown that closed behind the dialog — `focus()` on a
+ * detached node does nothing and the behaviour is what it already was.
+ *
+ * A caller's own `onCloseAutoFocus` still runs and still wins: it is called
+ * first, and if it calls `preventDefault` this leaves focus alone.
+ */
+function useReturnFocus(
+  onCloseAutoFocus?: (event: Event) => void,
+): Pick<
+  React.ComponentProps<typeof DialogPrimitive.Content>,
+  "onCloseAutoFocus"
+> {
+  const opener = React.useRef<HTMLElement | null>(null);
+
+  React.useEffect(() => {
+    opener.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    return () => {
+      opener.current = null;
+    };
+  }, []);
+
+  return {
+    onCloseAutoFocus: (event) => {
+      onCloseAutoFocus?.(event);
+      if (event.defaultPrevented) return;
+
+      const target = opener.current;
+      if (!target || !target.isConnected) return;
+
+      // Take over from Radix, which would otherwise focus nothing.
+      event.preventDefault();
+      target.focus();
+    },
+  };
+}
+
 function DialogContent({
   className,
   children,
   showClose = true,
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showClose?: boolean;
 }) {
+  const returnFocus = useReturnFocus(onCloseAutoFocus);
+
   return (
     <DialogPortal>
       <DialogOverlay />
@@ -58,6 +115,9 @@ function DialogContent({
           className,
         )}
         {...props}
+        // After `props`, so a caller cannot accidentally drop the restoration
+        // by passing its own handler — theirs is composed in, not replaced.
+        onCloseAutoFocus={returnFocus.onCloseAutoFocus}
       >
         {children}
         {showClose ? (

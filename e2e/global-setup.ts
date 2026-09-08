@@ -40,8 +40,13 @@ export interface E2EContext {
   email: string;
   password: string;
   documentId: string;
+  /** The 300-page text document, for the virtualisation check. */
+  largeDocumentId: string;
   userId: string;
 }
+
+/** Named here so the spec can find the document without hard-coding a title. */
+export const LARGE_DOCUMENT_TITLE = "Pagination Fixture";
 
 /**
  * Written to disk rather than passed in memory: Playwright runs global setup in
@@ -142,7 +147,9 @@ export default async function globalSetup(config: FullConfig) {
    * real `runPipeline`, unchanged.
    */
   const pdf = buildE2ePdf();
-  const { extractDocument } = await import("../src/lib/ingest/extract");
+  const { extractDocument, assemblePages } = await import(
+    "../src/lib/ingest/extract"
+  );
   const { documentPages } = await import("../src/db/schema/documents");
 
   const extracted = await extractDocument({
@@ -200,10 +207,65 @@ export default async function globalSetup(config: FullConfig) {
     );
   }
 
+  /*
+   * A 300-PAGE DOCUMENT, FOR THE VIRTUALISATION CHECK ONLY.
+   *
+   * Inserted directly at `ready` rather than ingested. What the viewer needs to
+   * render is `document_pages`, and what the virtualisation test measures is how
+   * many of them reach the DOM — neither involves a chunk, a vector, or a
+   * model. Embedding 300 pages to assert a windowing calculation would add
+   * minutes to CI to test nothing that embedding affects.
+   *
+   * It is a text document, so it goes through the text viewer rather than
+   * PDF.js. That is the right surface for this measurement: PDF.js does its own
+   * page management on top, and the window under test is ours.
+   */
+  const bigPages = Array.from(
+    { length: 300 },
+    (_, index) =>
+      `Section ${index + 1}
+
+` +
+      `This is page ${index + 1} of the pagination fixture. ` +
+      "The Provider shall deliver the services described in the applicable " +
+      "Statement of Work with reasonable skill and care, and shall notify the " +
+      "Customer in writing of any delay affecting an agreed delivery date.",
+  );
+  const bigAssembled = assemblePages(bigPages);
+
+  const [bigDocument] = await db
+    .insert(documents)
+    .values({
+      userId: user.id,
+      title: LARGE_DOCUMENT_TITLE,
+      filename: "pagination-fixture.txt",
+      mimeType: "text/plain",
+      byteSize: bigAssembled.text.length,
+      blobUrl: `${fixtures.url}/pagination-fixture.txt`,
+      blobPathname: `${user.id}/pagination-fixture.txt`,
+      pageCount: bigAssembled.pages.length,
+      status: "ready",
+      readyAt: new Date(),
+      embeddingModel: process.env.EMBEDDING_MODEL ?? "Xenova/bge-small-en-v1.5",
+      embeddingDim: Number(process.env.EMBEDDING_DIMENSIONS ?? 384),
+    })
+    .returning({ id: documents.id });
+
+  await db.insert(documentPages).values(
+    bigAssembled.pages.map((page) => ({
+      documentId: bigDocument.id,
+      pageNumber: page.pageNumber,
+      text: page.text,
+      charStart: page.charStart,
+      charEnd: page.charEnd,
+    })),
+  );
+
   const context: E2EContext = {
     email,
     password,
     documentId: document.id,
+    largeDocumentId: bigDocument.id,
     userId: user.id,
   };
 

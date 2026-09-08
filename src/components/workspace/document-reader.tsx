@@ -81,7 +81,27 @@ export function DocumentReader({
   }, [documentId, views]);
 
   // Nothing open, and nothing asked for. The page's own empty state.
-  if (!documentId) return <>{fallback}</>;
+  if (!documentId) {
+    /*
+     * THE PAGE'S ONE h1, WHEN THERE IS NO DOCUMENT TO NAME IT.
+     *
+     * With a document open, `ReadingHeader` below carries the h1 and it is the
+     * document's title — the most useful heading the page could have. With
+     * nothing open there was no h1 at all, so `/app` and a conversation whose
+     * documents are still ingesting had a heading outline that started at h2.
+     *
+     * Visually hidden rather than drawn: the empty state already says what to
+     * do in a full sentence, and a heading above it would be the interface
+     * repeating itself. Exactly one of these two branches renders at a time, so
+     * the page never has two.
+     */
+    return (
+      <>
+        <h1 className="sr-only">Workspace</h1>
+        {fallback}
+      </>
+    );
+  }
 
   // A view being fetched. A paper-coloured sheet at roughly the size of the
   // page that is coming, rather than a spinner on an empty table — same rule

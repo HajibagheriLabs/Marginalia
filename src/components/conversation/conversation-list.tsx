@@ -91,7 +91,18 @@ export function ConversationList({
       <ul className="flex shrink-0 flex-col gap-0.5 px-2 pb-2">
         {conversations.length === 0 ? (
           <li className="px-2 py-1.5 text-body-sm text-text-faint">
-            No conversations yet.
+            {/* Names what is missing AND the one way out. The heading above
+                already carries a "+" button, but a bare "No conversations yet."
+                asks the reader to go and find it. */}
+            No conversations yet.{" "}
+            <Link
+              href="/app"
+              onClick={onNavigate}
+              className="focus-ring rounded-control text-text underline underline-offset-2 hover:text-text-muted"
+            >
+              Ask a question
+            </Link>{" "}
+            to start one.
           </li>
         ) : (
           conversations.map((conversation) => (
