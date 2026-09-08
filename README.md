@@ -192,6 +192,10 @@ npm run db:migrate
 `--retrieval-only` — `OPENROUTER_API_KEY`. It ingests into its own user row and its own
 Qdrant collection, so it never touches real data.
 
+`npm run typecheck` runs `next typegen` first. Next.js generates the global
+`PageProps` and `LayoutProps` types into `.next/types`, so on a clean checkout —
+a fresh clone, or CI — `tsc` alone cannot resolve them.
+
 ### Tests
 
 Four guarantees, in priority order. Each has its own command and its own CI job,
