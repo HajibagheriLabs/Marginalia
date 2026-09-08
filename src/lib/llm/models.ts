@@ -45,7 +45,13 @@ import { env } from "@/lib/env";
 let provider: ReturnType<typeof createOpenRouter> | null = null;
 
 function getProvider() {
-  provider ??= createOpenRouter({ apiKey: env.OPENROUTER_API_KEY });
+  provider ??= createOpenRouter({
+    apiKey: env.OPENROUTER_API_KEY,
+    // Undefined in every real deployment, so the SDK uses OpenRouter's own
+    // URL. The E2E suite sets it to a local stub — see OPENROUTER_BASE_URL in
+    // env.ts for why that is an override rather than a test-only branch.
+    ...(env.OPENROUTER_BASE_URL ? { baseURL: env.OPENROUTER_BASE_URL } : {}),
+  });
   return provider;
 }
 

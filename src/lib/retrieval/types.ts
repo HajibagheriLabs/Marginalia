@@ -147,7 +147,11 @@ export interface RetrievalTuning {
   lexicalWeight?: number;
   /** Relative RRF floor, as a fraction of the top score. Default 0.3. */
   minRrfRatio?: number;
-  /** Absolute cross-encoder floor when reranking ran. Default 0. */
+  /**
+   * Absolute rerank floor when reranking ran. Defaults to the active
+   * reranker's own `scoreFloor`, which differs per score scale — 0 for raw
+   * logits, 0.02 for a probability. Set only to sweep it.
+   */
   minRerankScore?: number;
   /** Hard cap on assembled passage tokens. Default 4,000. */
   maxContextTokens?: number;
@@ -204,6 +208,30 @@ export interface RetrievalStats {
  */
 export interface Reranker {
   readonly model: string;
+
+  /**
+   * The relevance boundary ON THIS RERANKER'S OWN SCALE.
+   *
+   * Part of the interface, not a constant in assemble.ts, because a floor is
+   * only meaningful relative to the scale that produced it — and the two
+   * implementations do not share one:
+   *
+   *   local        RAW LOGITS, unbounded, centred near 0. Floor 0, which is
+   *                where the model was trained to separate relevant from
+   *                irrelevant.
+   *   openrouter   a PROBABILITY in (0, 1). Floor 0.02, measured.
+   *
+   * Getting this wrong is silent and total. A floor of 0 applied to a
+   * probability admits every passage that can ever be scored, so the context is
+   * never empty, and the system loses the one thing reranking gives it that RRF
+   * structurally cannot: the ability to say "none of these are relevant".
+   * Answers keep their citations and start resting on the least-bad passage.
+   *
+   * `RetrievalTuning.minRerankScore` still overrides this, so the eval harness
+   * can sweep the floor. Absent an override, the reranker's own value is used.
+   */
+  readonly scoreFloor: number;
+
   /**
    * Score each passage against the query. Returns one score per passage, in
    * the order given. Higher is more relevant; the scale is the model's own and

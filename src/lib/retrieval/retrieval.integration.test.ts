@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
 
 import { db } from "@/db";
 import { chunks, documentPages, documents, users } from "@/db/schema";
@@ -10,6 +10,7 @@ import { getEmbeddingProvider, type EmbeddingProvider } from "@/lib/embeddings";
 import { assemblePages } from "@/lib/ingest/extract";
 import { runPipeline } from "@/lib/ingest/pipeline";
 import { createQdrantVectorStore, type VectorStore } from "@/lib/vector";
+import { describeIntegration } from "@/test/harness";
 
 import { retrieve } from "./index";
 import { searchLexical } from "./lexical";
@@ -35,12 +36,6 @@ import { RetrievalError } from "./types";
  * channel is deleted is not testing the lexical channel.
  */
 
-const configured = Boolean(
-  process.env.DATABASE_URL &&
-    process.env.QDRANT_URL &&
-    process.env.QDRANT_API_KEY,
-);
-const skip = !configured || process.env.SKIP_MODEL_TESTS === "1";
 
 /**
  * A contract containing one deliberately unguessable identifier.
@@ -127,7 +122,7 @@ function policyPages(): string[] {
   ];
 }
 
-describe.skipIf(skip)("hybrid retrieval", () => {
+describeIntegration("P4 — retrieval correctness: hybrid search", { postgres: true, qdrant: true, models: true }, () => {
   const collection = `marginalia_retrieval_test_${Date.now()}_${randomUUID().slice(0, 8)}`;
 
   let raw: QdrantClient;

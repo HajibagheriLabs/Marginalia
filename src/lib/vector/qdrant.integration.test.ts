@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 
 import { QdrantClient } from "@qdrant/js-client-rest";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
+
+import { describeIntegration } from "@/test/harness";
 
 import { createQdrantVectorStore } from "./qdrant";
 import type { VectorPoint, VectorStore } from "./types";
@@ -39,13 +41,16 @@ const QDRANT_URL = process.env.QDRANT_URL;
 const QDRANT_API_KEY = process.env.QDRANT_API_KEY;
 const DIMENSIONS = Number(process.env.EMBEDDING_DIMENSIONS ?? 384);
 
-/**
- * Skip rather than fail without credentials, so `npm test` stays runnable on a
- * fresh clone. The skip is loud in the reporter, which is the right tradeoff:
- * a security test that fails the build for everyone who has not configured a
- * cloud service gets deleted, and a deleted test protects nothing.
+/*
+ * The guard is `describeIntegration` in src/test/harness.ts, shared with the
+ * other three integration suites. Without credentials it SKIPS and names the
+ * missing variable, so `npm test` stays runnable on a fresh clone — a security
+ * test that fails the build for everyone who has not configured a cloud
+ * service gets deleted, and a deleted test protects nothing.
+ *
+ * In CI it FAILS instead. CI provisions Qdrant on purpose, so a skip there is a
+ * broken workflow, and a skipped suite reports green.
  */
-const configured = Boolean(QDRANT_URL && QDRANT_API_KEY);
 
 /** A unit vector along one axis. */
 function axis(index: number): number[] {
@@ -63,7 +68,7 @@ function nearAxisZero(index: number): number[] {
   return vector.map((value) => value / norm);
 }
 
-describe.skipIf(!configured)("Qdrant vector store — user isolation", () => {
+describeIntegration("P1 — cross-user isolation: the store's payload filter", { qdrant: true }, () => {
   // A throwaway collection per run: this test upserts and deletes, and must
   // never be able to touch the real one.
   const collection = `marginalia_isolation_test_${Date.now()}_${randomUUID().slice(0, 8)}`;

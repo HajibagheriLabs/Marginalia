@@ -55,3 +55,9 @@ yarn-error.log*
 # eval tenant, and a committed copy would point every other clone at rows that
 # do not exist there.
 /evals/results/.ingest-cache.json
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/e2e/.context.json

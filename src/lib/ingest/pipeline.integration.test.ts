@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 
 import { db } from "@/db";
 import {
@@ -18,6 +18,7 @@ import {
   type EmbeddingProvider,
 } from "@/lib/embeddings";
 import { createQdrantVectorStore, type VectorStore } from "@/lib/vector";
+import { describeIntegration } from "@/test/harness";
 
 import { assemblePages } from "./extract";
 import { runPipeline } from "./pipeline";
@@ -45,12 +46,6 @@ import { runPipeline } from "./pipeline";
  * extraction uses, so the offsets are produced by production code.
  */
 
-const configured = Boolean(
-  process.env.DATABASE_URL &&
-    process.env.QDRANT_URL &&
-    process.env.QDRANT_API_KEY,
-);
-const skip = !configured || process.env.SKIP_MODEL_TESTS === "1";
 
 /**
  * A document long enough to need SEVERAL embedding batches.
@@ -99,7 +94,7 @@ function failingAfter(
   };
 }
 
-describe.skipIf(skip)("ingestion pipeline", () => {
+describeIntegration("P3 — ingestion idempotency: the four-stage pipeline", { postgres: true, qdrant: true, models: true }, () => {
   const collection = `marginalia_pipeline_test_${Date.now()}_${randomUUID().slice(0, 8)}`;
 
   let raw: QdrantClient;
@@ -431,5 +426,58 @@ describe.skipIf(skip)("ingestion pipeline", () => {
     expect(second.total).toBe(first.total);
     expect(second.indexed).toBe(second.total);
     expect(await storedPointCount()).toBe(second.total);
+  }, 300_000);
+
+  /**
+   * DELETING A DOCUMENT MUST TAKE ITS VECTORS WITH IT.
+   *
+   * The rows are the easy half — a foreign key handles chunks and pages. The
+   * vectors are the half that leaks, because Qdrant knows nothing about the
+   * delete and nothing in Postgres references a point id. Orphaned points are
+   * invisible: the document vanishes from the library, every list query is
+   * correct, and the passages stay in the collection indefinitely, still
+   * carrying the user's text and still matching their queries.
+   *
+   * This exercises the same sequence `deleteDocument` performs — vectors first,
+   * then rows — rather than calling the Server Action, which would need a
+   * session. What is asserted is the property that matters and the one a
+   * refactor can silently drop: after a delete, the store holds NOTHING for
+   * that document.
+   */
+  it("removes the document's vectors when the document is deleted", async () => {
+    await runPipeline(documentId, userId, {
+      embeddings: provider,
+      vectors: store,
+    });
+
+    // The precondition. Without it a broken pipeline would make the assertion
+    // below pass by having written no points in the first place.
+    const before = await storedPointCount();
+    expect(before).toBeGreaterThan(0);
+
+    // Step 2 of deleteDocument: the vectors, which nothing else can reach.
+    await store.deleteByDocument(documentId);
+
+    // Step 3: the rows. Chunks go for real; the document is soft-deleted.
+    await db.transaction(async (tx) => {
+      await tx.delete(chunks).where(eq(chunks.documentId, documentId));
+      await tx
+        .delete(documentPages)
+        .where(eq(documentPages.documentId, documentId));
+      await tx
+        .update(documents)
+        .set({ deletedAt: new Date() })
+        .where(eq(documents.id, documentId));
+    });
+
+    expect(await storedPointCount()).toBe(0);
+
+    const counts = await chunkCounts();
+    expect(counts.total).toBe(0);
+
+    // Soft-deleted, not gone: the row survives so an audit can still see the
+    // document existed, and every user-facing query filters on deletedAt.
+    const row = await readDocument();
+    expect(row?.deletedAt).not.toBeNull();
   }, 300_000);
 });

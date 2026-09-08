@@ -23,3 +23,4 @@ export {
 // Exported for the ingestion stage, which needs the batch size to decide how
 // much work to take per invocation, and for tests.
 export { LOCAL_EMBEDDING } from "./local";
+export { OPENROUTER_EMBEDDING } from "./openrouter";

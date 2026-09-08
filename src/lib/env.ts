@@ -85,6 +85,22 @@ const serverSchema = z
     // `:free` suffix). It CHANGES — models are delisted without notice — which
     // is why there is a fallback list at all.
     OPENROUTER_API_KEY: z.string().min(1),
+    /**
+     * Where the gateway lives. Blank means OpenRouter itself.
+     *
+     * Exists for ONE reason: the end-to-end suite points it at a local stub
+     * that speaks the same chat-completions SSE format, so a browser test can
+     * assert streaming, citation markers and the trace without spending a
+     * request from a 50/day shared pool — and without going red on a day the
+     * upstream free pool is exhausted, which would make the suite a weather
+     * report rather than a test.
+     *
+     * It is an override rather than a test-only branch on purpose: there is no
+     * `if (isTest)` anywhere in the model path, so the code the E2E suite
+     * exercises is the code that ships. The `:free` rule still applies to every
+     * model id regardless of where this points.
+     */
+    OPENROUTER_BASE_URL: optional(z.url()),
     OPENROUTER_MODEL: freeModelId.default("nvidia/nemotron-3.5-lightning:free"),
     // Tried in order when the primary model is delisted, rate-limited, or
     // erroring. Comma-separated in the environment; an array everywhere else.
@@ -103,19 +119,31 @@ const serverSchema = z
 
     // Embeddings, behind the EmbeddingProvider interface.
     //
-    // `local` runs the model in this Node process via Transformers.js: no API
-    // call, no key, no per-token cost, nothing metered. It is the only value
-    // this enum accepts, and that is enforcement rather than documentation —
-    // ingestion embeds every chunk of every upload, so a metered embedder
-    // turns each document into a bill, and this project runs on free tiers
-    // with no card on file. Adding a provider means adding it here AND to the
-    // registry in src/lib/embeddings/provider.ts, which spells out what may
-    // and may not go in it.
+    // `local` is the DEFAULT and the shipped configuration: the model runs in
+    // this Node process via Transformers.js, so there is no API call, no key,
+    // no per-token cost and nothing to rate-limit.
+    //
+    // `openrouter` calls POST /api/v1/embeddings. It exists because the
+    // interface deserves a second real implementation and because a deployment
+    // without the memory or cold-start budget for in-process inference needs
+    // somewhere to go. An earlier version of this comment claimed OpenRouter had
+    // no embedding models; that was wrong, and the mistake is worth naming
+    // precisely so it is not repeated. `GET /api/v1/models` returns only models
+    // whose OUTPUT MODALITY is text, image or audio. Embedding models are behind
+    // `?output_modalities=embeddings` (37 of them) and rerankers behind
+    // `?output_modalities=rerank` (7). A filtered listing is evidence about the
+    // filter before it is evidence about the catalogue.
+    //
+    // THE COST RULE IS UNCHANGED AND IS ENFORCED BELOW: with `openrouter`,
+    // EMBEDDING_MODEL must end in `:free`. Ingestion embeds every chunk of every
+    // upload, so a metered embedder is a per-document bill — a far bigger
+    // exposure than the chat pool's one request per question.
     //
     // Changing EMBEDDING_MODEL means RE-INGESTING every document, not editing
-    // this value in place — embedding spaces are never mixed, and the
-    // dimension is part of the space.
-    EMBEDDING_PROVIDER: z.enum(["local"]).default("local"),
+    // this value in place. Embedding spaces are never mixed and the dimension is
+    // part of the space — bge is 384, nvidia/nemotron-3-embed-1b:free is 2048 —
+    // so a provider switch is also a new QDRANT_COLLECTION.
+    EMBEDDING_PROVIDER: z.enum(["local", "openrouter"]).default("local"),
     EMBEDDING_MODEL: z.string().min(1).default("Xenova/bge-small-en-v1.5"),
     EMBEDDING_DIMENSIONS: z.coerce.number().int().positive().default(384),
 
@@ -142,15 +170,19 @@ const serverSchema = z
     // `local` runs the cross-encoder Xenova/ms-marco-MiniLM-L-6-v2 in this
     // process, the same way embeddings do.
     //
-    // THERE IS NO HOSTED OPTION, and not for lack of looking. Every commercial
-    // reranking API is metered, and this project runs with no card on file.
-    // OpenRouter — the one gateway this app already talks to — has no reranking
-    // and no embedding models at all: its catalogue is 431 models whose output
-    // modalities are text, image, and audio, with nothing that returns a vector
-    // or a relevance score. Checked against GET https://openrouter.ai/api/v1/models.
-    // So "use a free hosted reranker" is not a configuration this project
-    // declined to add; it is not on offer.
-    RETRIEVAL_RERANKER: z.enum(["off", "local"]).default("local"),
+    // `openrouter` calls POST /api/v1/rerank with the free
+    // nvidia/llama-nemotron-rerank-vl-1b-v2:free. This corrects an earlier
+    // claim here that no hosted option existed — see the EMBEDDING_PROVIDER
+    // note above for how that mistake was made.
+    //
+    // ITS SCORES ARE ON A DIFFERENT SCALE, which is the part that matters.
+    // `local` returns raw logits with the relevant/irrelevant boundary at 0;
+    // the hosted one returns a probability in (0, 1), where a floor of 0 would
+    // admit EVERY passage and silently delete the relevance floor. Each
+    // implementation therefore carries its own `scoreFloor` and retrieve()
+    // defaults to it. See src/lib/retrieval/rerank-openrouter.ts for the
+    // measured distribution behind 0.02.
+    RETRIEVAL_RERANKER: z.enum(["off", "local", "openrouter"]).default("local"),
     RETRIEVAL_RERANK_MODEL: z
       .string()
       .min(1)
@@ -199,6 +231,85 @@ const serverSchema = z
      * 503 with the command that fixes it rather than pretending.
      */
     DEMO_USER_PASSWORD: optional(z.string().min(8)),
+  })
+  /*
+   * ┌────────────────────────────────────────────────────────────────────────┐
+   * │ THE `:free` RULE, EXTENDED TO THE HOSTED EMBEDDER AND RERANKER.        │
+   * │                                                                        │
+   * │ Field-level refinements cannot express this: whether EMBEDDING_MODEL   │
+   * │ must end in `:free` depends on EMBEDDING_PROVIDER, and a `.refine()`   │
+   * │ on a single field cannot see a sibling. So it is checked on the object,│
+   * │ still at boot, still before a single request can be made.              │
+   * │                                                                        │
+   * │ WHY IT MATTERS MORE HERE THAN FOR CHAT. The chat pool spends one       │
+   * │ request per question, and a mistake there shows up as a small invoice. │
+   * │ The EMBEDDER runs over every chunk of every document — one upload of a │
+   * │ 300-page PDF is thousands of metered calls before anybody has asked    │
+   * │ anything. That is the one place where a config typo turns into real    │
+   * │ money fast, so it refuses to boot rather than refusing at request time.│
+   * └────────────────────────────────────────────────────────────────────────┘
+   */
+  .superRefine((value, ctx) => {
+    if (value.EMBEDDING_PROVIDER === "openrouter") {
+      if (!value.EMBEDDING_MODEL.endsWith(":free")) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["EMBEDDING_MODEL"],
+          message:
+            "must end in `:free` when EMBEDDING_PROVIDER=openrouter — ingestion " +
+            "embeds every chunk of every document, so a metered embedder is a " +
+            "bill per upload. Free embedding models: " +
+            "https://openrouter.ai/api/v1/models?output_modalities=embeddings",
+        });
+      }
+      // The local provider needs no key, so this is only required here.
+      if (!value.OPENROUTER_API_KEY) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["OPENROUTER_API_KEY"],
+          message: "is required when EMBEDDING_PROVIDER=openrouter",
+        });
+      }
+      // A local model id under the hosted provider, or the reverse, is the
+      // realistic typo: both are non-empty strings and neither schema notices.
+      if (value.EMBEDDING_MODEL.startsWith("Xenova/")) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["EMBEDDING_MODEL"],
+          message:
+            "looks like a Transformers.js model id but EMBEDDING_PROVIDER is " +
+            "`openrouter`. Set EMBEDDING_PROVIDER=local, or use an OpenRouter slug.",
+        });
+      }
+    }
+
+    if (value.RETRIEVAL_RERANKER === "openrouter") {
+      if (!value.RETRIEVAL_RERANK_MODEL.endsWith(":free")) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["RETRIEVAL_RERANK_MODEL"],
+          message:
+            "must end in `:free` when RETRIEVAL_RERANKER=openrouter. Free " +
+            "rerankers: https://openrouter.ai/api/v1/models?output_modalities=rerank",
+        });
+      }
+      if (!value.OPENROUTER_API_KEY) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["OPENROUTER_API_KEY"],
+          message: "is required when RETRIEVAL_RERANKER=openrouter",
+        });
+      }
+      if (value.RETRIEVAL_RERANK_MODEL.startsWith("Xenova/")) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["RETRIEVAL_RERANK_MODEL"],
+          message:
+            "looks like a Transformers.js model id but RETRIEVAL_RERANKER is " +
+            "`openrouter`. Set RETRIEVAL_RERANKER=local, or use an OpenRouter slug.",
+        });
+      }
+    }
   });
 
 type ServerEnv = z.infer<typeof serverSchema>;

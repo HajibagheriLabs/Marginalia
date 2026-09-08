@@ -192,17 +192,55 @@ npm run db:migrate
 `--retrieval-only` — `OPENROUTER_API_KEY`. It ingests into its own user row and its own
 Qdrant collection, so it never touches real data.
 
-Some tests need real services. They skip themselves when the credentials are
-absent, so `npm test` works on a fresh clone:
+### Tests
 
-| Test                              | Needs                          |
-| --------------------------------- | ------------------------------ |
-| `vector/qdrant.integration`       | `QDRANT_URL`, `QDRANT_API_KEY` |
-| `embeddings/local.integration`    | Network on first run (~34 MB)  |
-| `embeddings/budget.integration`   | Network on first run           |
-| `ingest/pipeline.integration`     | All of the above + `DATABASE_URL` |
+Four guarantees, in priority order. Each has its own command and its own CI job,
+so a failure names the thing that broke:
 
-Set `SKIP_MODEL_TESTS=1` to skip everything that loads the embedding model.
+| Priority | Guarantee                                                          | Command                    |
+| -------- | ------------------------------------------------------------------ | -------------------------- |
+| **P1**   | One user can never retrieve, cite, or read another user's passages | `npm run test:p1`          |
+| **P2**   | Every marker in a stored answer maps to a retrieved passage        | `npm run test:p2`          |
+| **P3**   | Re-running any ingestion stage duplicates nothing                  | `npm run test:p3`          |
+| **P4**   | Fusion, filters, and the two search channels rank correctly        | `npm run test:p4`          |
+|          | Chunking, offsets, marker parsing, RRF maths, pricing, limits      | `npm run test:unit`        |
+|          | One happy path in a browser                                        | `npm run test:e2e`         |
+
+`npm test` runs everything. Coverage is not the goal: a test earns its place by
+failing when a specific guarantee breaks.
+
+The integration suites use real Postgres, real Qdrant and the real embedding
+model — a filter, an idempotent stage and a ranking are all properties of those
+services, and a mock would only assert that the mock agreed with the test. They
+**skip** when credentials are absent, so `npm test` works on a fresh clone, and
+**fail** when they are absent in CI, because a skipped suite reports green.
+`SKIP_MODEL_TESTS=1` skips everything that loads a model.
+
+The end-to-end suite signs in, opens a document that went through the real
+pipeline, asks a question, and follows the citation to the highlighted passage.
+The model is a local stub speaking the chat-completions SSE format, pointed at
+by `OPENROUTER_BASE_URL` — so the answer is deterministic and free while the
+pool, failover, streaming and citation validation are all the shipping code.
+
+### What is deliberately not tested
+
+| Not covered                                    | Why                                                                                                                              |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| The browser upload leg (file picker → Blob)    | Posts bytes straight to Vercel Blob with a short-lived token; needs a real Blob secret that CI should not hold. Everything after the bytes land runs for real. |
+| Email delivery and the verification link        | No provider is configured — the app prints the mail. The E2E confirms the address directly and still exercises the real credential path. |
+| Answer *quality*                                | That is the eval harness's job, not a test's: `npm run eval` scores recall@k and MRR over a fixed question set. A pass/fail assertion on a model's wording would be a flake. |
+| Real model responses                            | The free pool is 50 requests a day, shared, and delisted without notice. A suite that called it would go red on a busy afternoon and prove nothing about this code. |
+| The hosted embedder and reranker, live          | Unit-tested against a scripted transport instead. Calling them for real would spend quota to assert someone else's uptime. Their wire shapes were verified by hand and the fixtures copy the real responses. |
+| Payment, billing, multi-tenancy                 | The app has none. One user owns their documents; every price is zero.                                                              |
+| Visual regression                               | No screenshot baselines. The design system is enforced by tokens and review, and a pixel diff on a streaming interface is noise.  |
+
+### CI
+
+`.github/workflows/ci.yml` runs on every push and pull request: static checks,
+the four priority suites, and the browser suite — every job in parallel, each
+with its own Postgres and Qdrant service container. Run one after another they
+take about six minutes; in parallel the pipeline costs whatever its slowest job
+costs. Model weights and Playwright browsers are cached between runs.
 
 ### Deploying to Vercel
 

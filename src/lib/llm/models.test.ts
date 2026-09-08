@@ -60,6 +60,67 @@ describe("`:free` enforcement at boot", () => {
     await expect(import("@/lib/env")).rejects.toThrow(/:free/);
   });
 
+  /*
+   * THE SAME RULE, ON THE TWO HOSTED RETRIEVAL PROVIDERS.
+   *
+   * These matter MORE than the chat pool, not less. A chat model is one request
+   * per question and a mistake shows up as a small invoice. The EMBEDDER runs
+   * over every chunk of every document — a single 300-page upload is thousands
+   * of metered calls before anybody has asked anything.
+   *
+   * The check is a `superRefine` on the object rather than a field refinement,
+   * because whether EMBEDDING_MODEL must end in `:free` depends on
+   * EMBEDDING_PROVIDER, and a field cannot see a sibling.
+   */
+  it("refuses a metered embedding model", async () => {
+    vi.stubEnv("EMBEDDING_PROVIDER", "openrouter");
+    vi.stubEnv("EMBEDDING_MODEL", "some-vendor/expensive-embedder");
+    vi.stubEnv("EMBEDDING_DIMENSIONS", "1024");
+
+    await expect(import("@/lib/env")).rejects.toThrow(/:free/);
+  });
+
+  it("refuses a metered reranker", async () => {
+    vi.stubEnv("RETRIEVAL_RERANKER", "openrouter");
+    vi.stubEnv("RETRIEVAL_RERANK_MODEL", "some-vendor/expensive-reranker");
+
+    await expect(import("@/lib/env")).rejects.toThrow(/:free/);
+  });
+
+  it("refuses a local model id under the hosted embedding provider", async () => {
+    // The realistic typo: flipping EMBEDDING_PROVIDER and forgetting the model.
+    // Both values are non-empty strings, so nothing else notices — and the
+    // failure would otherwise be a 404 from the gateway on the first upload.
+    vi.stubEnv("EMBEDDING_PROVIDER", "openrouter");
+    vi.stubEnv("EMBEDDING_MODEL", "Xenova/bge-small-en-v1.5");
+
+    await expect(import("@/lib/env")).rejects.toThrow(/Transformers\.js/);
+  });
+
+  it("accepts a free hosted embedder and reranker together", async () => {
+    vi.stubEnv("EMBEDDING_PROVIDER", "openrouter");
+    vi.stubEnv("EMBEDDING_MODEL", "nvidia/nemotron-3-embed-1b:free");
+    vi.stubEnv("EMBEDDING_DIMENSIONS", "2048");
+    vi.stubEnv("RETRIEVAL_RERANKER", "openrouter");
+    vi.stubEnv(
+      "RETRIEVAL_RERANK_MODEL",
+      "nvidia/llama-nemotron-rerank-vl-1b-v2:free",
+    );
+
+    const { env } = await import("@/lib/env");
+    expect(env.EMBEDDING_PROVIDER).toBe("openrouter");
+    expect(env.EMBEDDING_DIMENSIONS).toBe(2048);
+    expect(env.RETRIEVAL_RERANKER).toBe("openrouter");
+  });
+
+  it("leaves the local default alone", async () => {
+    // The shipped configuration. `local` needs no key and no `:free` suffix,
+    // because nothing about it is metered.
+    const { env } = await import("@/lib/env");
+    expect(env.EMBEDDING_PROVIDER).toBe("local");
+    expect(env.EMBEDDING_MODEL).toBe("Xenova/bge-small-en-v1.5");
+  });
+
   it("loads with an all-free pool, and dedupes it", async () => {
     vi.stubEnv("OPENROUTER_MODEL", "nvidia/nemotron-3.5-lightning:free");
     // The primary repeated in the fallbacks: re-asking a model that just

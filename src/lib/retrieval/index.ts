@@ -264,7 +264,17 @@ export async function retrieve(
     k,
     reranked: rerankedCount > 0,
     minRrfRatio: tuning.minRrfRatio,
-    minRerankScore: tuning.minRerankScore,
+    /*
+     * The floor defaults to THE RERANKER'S OWN, not to a module constant.
+     *
+     * The two implementations score on different scales — raw logits centred
+     * on zero, and a probability in (0, 1) — so one shared default is correct
+     * for at most one of them. Applying the logit floor of 0 to a probability
+     * would admit every passage ever scored and quietly delete the relevance
+     * floor. An explicit `tuning.minRerankScore` still wins, so the eval
+     * harness can sweep it.
+     */
+    minRerankScore: tuning.minRerankScore ?? reranker?.scoreFloor,
     maxContextTokens: tuning.maxContextTokens,
   });
 

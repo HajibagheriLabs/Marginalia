@@ -8,10 +8,14 @@ import {
 
 import { env } from "@/lib/env";
 
+import { createOpenRouterReranker } from "./rerank-openrouter";
 import type { Reranker } from "./types";
 
 /**
- * RERANKING — a local cross-encoder, off by default.
+ * RERANKING — a local cross-encoder. ON by default; `off` must keep working.
+ *
+ * There are two implementations of `Reranker`: this one, and the hosted one in
+ * rerank-openrouter.ts. `RETRIEVAL_RERANKER` picks between them and `off`.
  *
  * ───────────────────────────────────────────────────────────────────────────
  * WHAT A CROSS-ENCODER IS, AND WHY IT IS A SECOND STAGE
@@ -54,13 +58,17 @@ import type { Reranker } from "./types";
  * the scale from the trace table.
  *
  * ───────────────────────────────────────────────────────────────────────────
- * OFF IS THE DEFAULT
+ * ON BY DEFAULT, AND OFF MUST KEEP WORKING
  *
- * The whole application works with reranking off, and that is the shipped
- * configuration. It is a real cost — a second model in memory, a second cold
- * start, and a forward pass per candidate on the request path — and whether it
- * is worth paying is a question about this corpus that only the eval harness
- * can answer. `RETRIEVAL_RERANKER=local` turns it on so both can be measured.
+ * The default was earned by measurement rather than assumed. Over the 38
+ * answerable eval questions, `local` moves recall@5 from 86.8% to 92.1% and MRR
+ * from 0.736 to 0.788, costing +2.1 s of p50 retrieval latency. Reproduce with
+ * `npm run eval -- --compare baseline-retrieval rerank-on`.
+ *
+ * It is still a real cost — a second model resident, a second cold start, and a
+ * forward pass per candidate on the request path — so `RETRIEVAL_RERANKER=off`
+ * has to remain a working configuration, and the harness checks that on every
+ * run passing `--no-rerank`.
  */
 
 export const RERANK = {
@@ -139,6 +147,19 @@ export function createLocalReranker(): Reranker {
   return {
     model: env.RETRIEVAL_RERANK_MODEL,
 
+    /*
+     * Zero, because these are RAW LOGITS and zero is where the model was
+     * trained to put the boundary. Measured on this model: about +7 for a
+     * passage that answers the question, about -11 for an unrelated passage
+     * from the same document, so the gap around zero is wide and the exact
+     * value is not delicate.
+     *
+     * This is on the reranker rather than in assemble.ts because it is a fact
+     * about THIS SCALE. The OpenRouter reranker returns a probability, where
+     * zero would admit everything.
+     */
+    scoreFloor: 0,
+
     async score(query: string, passages: string[]): Promise<number[]> {
       if (passages.length === 0) return [];
 
@@ -178,5 +199,12 @@ export function createLocalReranker(): Reranker {
  * "on, and everything scored zero".
  */
 export function getReranker(): Reranker | null {
-  return env.RETRIEVAL_RERANKER === "local" ? createLocalReranker() : null;
+  switch (env.RETRIEVAL_RERANKER) {
+    case "local":
+      return createLocalReranker();
+    case "openrouter":
+      return createOpenRouterReranker();
+    case "off":
+      return null;
+  }
 }

@@ -1,0 +1,242 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# A new push to the same branch cancels the run it superseded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ════════════════════════════════════════════════════════════════════════════
+# EVERY JOB RUNS IN PARALLEL, AND THAT IS THE WHOLE TIMING STRATEGY.
+#
+# The integration suites are slow for an honest reason: they embed real text
+# with a real model against real Postgres and real Qdrant. Run one after
+# another they take about six minutes; run side by side, the pipeline costs
+# whatever its slowest job costs, which is the ingestion suite at roughly
+# three. Nothing here depends on anything else, so nothing waits.
+#
+# The four integration jobs are named for the four guarantees in priority
+# order, so a red badge says WHICH one broke before anyone opens a log.
+# `fail-fast: false` because "P1 failed" must not hide whether P4 also did.
+# ════════════════════════════════════════════════════════════════════════════
+
+env:
+  # ── SERVICES ───────────────────────────────────────────────────────────────
+  DATABASE_URL: postgres://postgres:postgres@localhost:5432/marginalia_test
+  QDRANT_URL: http://localhost:6333
+  # Qdrant runs unauthenticated locally and ignores this. It is set because
+  # env.ts requires a non-empty value, and the SHAPE of the configuration
+  # should not differ between CI and production.
+  QDRANT_API_KEY: ci-not-a-secret
+
+  # ── PLACEHOLDERS FOR SERVICES CI NEVER CALLS ───────────────────────────────
+  # Nothing here reaches the service it names. The model gateway is a local
+  # stub in the browser suite and is not called at all by the others; Vercel
+  # Blob is never touched, because the browser suite parses its PDF fixture
+  # directly rather than uploading it.
+  #
+  # They are set rather than omitted so that env.ts's boot-time validation runs
+  # in CI exactly as it does in production — including the `:free` rule, which
+  # is a cost guarantee and deserves to be exercised on every commit.
+  BETTER_AUTH_SECRET: ci-secret-not-used-anywhere-32-chars-min
+  BETTER_AUTH_URL: http://127.0.0.1:3100
+  NEXT_PUBLIC_APP_URL: http://127.0.0.1:3100
+  BLOB_READ_WRITE_TOKEN: vercel_blob_rw_ci_placeholder
+  OPENROUTER_API_KEY: ci-placeholder
+  INGEST_SECRET: ci-ingest-secret-placeholder
+
+  # ── RETRIEVAL CONFIGURATION ────────────────────────────────────────────────
+  # The shipped defaults. CI runs what production runs.
+  EMBEDDING_PROVIDER: local
+  EMBEDDING_MODEL: Xenova/bge-small-en-v1.5
+  EMBEDDING_DIMENSIONS: "384"
+  RETRIEVAL_RERANKER: local
+  RETRIEVAL_RERANK_MODEL: Xenova/ms-marco-MiniLM-L-6-v2
+  TRANSFORMERS_CACHE_DIR: /home/runner/.cache/transformers
+
+jobs:
+  # ══════════════════════════════════════════════════════════════════════════
+  # Types, lint, and every test that needs no service.
+  # ══════════════════════════════════════════════════════════════════════════
+  static:
+    name: types, lint, unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+
+      # Chunk boundaries and page attribution, the extraction offset round
+      # trip, marker parsing, RRF arithmetic against hand-computed fixtures,
+      # cost estimation, rate limits, and the viewer's anchor maths. No
+      # database and no model: these are the fast ones, and they are the ones a
+      # failure is cheapest to diagnose from.
+      - run: npm run test:unit
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # THE FOUR GUARANTEES, one job each, in priority order.
+  # ══════════════════════════════════════════════════════════════════════════
+  integration:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - script: test:p1
+            name: P1 cross-user isolation
+          - script: test:p2
+            name: P2 citation faithfulness
+          - script: test:p3
+            name: P3 ingestion idempotency
+          - script: test:p4
+            name: P4 retrieval correctness
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: marginalia_test
+        ports: ["5432:5432"]
+        # Without a health check the first query races the server's startup and
+        # fails roughly one run in five — the classic flaky-CI cause.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      qdrant:
+        image: qdrant/qdrant:v1.12.5
+        ports: ["6333:6333"]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # ~40 MB of ONNX weights from the Hugging Face CDN. Cached, because
+      # downloading them on every run is slow AND makes a local test depend on
+      # someone else's uptime.
+      - name: Cache model weights
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/transformers
+          key: transformers-${{ runner.os }}-bge-small-marco-minilm-v1
+
+      - run: npm ci
+
+      # Qdrant's image has no health-check hook, so it is polled here. The
+      # suites fail rather than skip when it is missing (see
+      # `describeIntegration`), so a slow start would surface as a real failure.
+      - name: Wait for Qdrant
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf "$QDRANT_URL/readyz" > /dev/null; then
+              echo "qdrant ready after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "qdrant did not become ready"; exit 1
+
+      - name: Apply migrations
+        run: npm run db:migrate
+
+      - name: ${{ matrix.name }}
+        run: npm run ${{ matrix.script }}
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # One happy path in a browser, against a production build.
+  # ══════════════════════════════════════════════════════════════════════════
+  browser:
+    name: e2e (playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: marginalia_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      qdrant:
+        image: qdrant/qdrant:v1.12.5
+        ports: ["6333:6333"]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Cache model weights
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/transformers
+          key: transformers-${{ runner.os }}-bge-small-marco-minilm-v1
+
+      - run: npm ci
+
+      # Chromium only. The suite asserts application behaviour, not rendering
+      # differences between engines, so three browsers would triple the slowest
+      # job to re-answer the same question.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Wait for Qdrant
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf "$QDRANT_URL/readyz" > /dev/null; then
+              echo "qdrant ready after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "qdrant did not become ready"; exit 1
+
+      - name: Apply migrations
+        run: npm run db:migrate
+
+      # playwright.config.ts owns the build, the web server on 3100, the model
+      # stub and the fixture ingestion.
+      - name: Run the happy path
+        run: npm run test:e2e
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

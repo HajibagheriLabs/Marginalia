@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { APICallError } from "ai";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 
 import { db } from "@/db";
 import {
@@ -16,6 +16,7 @@ import {
   users,
 } from "@/db/schema";
 import type { RetrievalCandidate, RetrievedPassage } from "@/lib/retrieval";
+import { describeIntegration } from "@/test/harness";
 
 import { answer } from "./answer";
 import type { AnswerEvent, ModelRunner } from "./types";
@@ -36,7 +37,6 @@ import type { AnswerEvent, ModelRunner } from "./types";
  * OpenRouter actually returns.
  */
 
-const configured = Boolean(process.env.DATABASE_URL);
 
 /** A runner that replays a fixed answer, and records what it was asked. */
 function scriptedRunner(
@@ -109,7 +109,7 @@ function textOf(events: AnswerEvent[]): string {
     .join("");
 }
 
-describe.skipIf(!configured)("answer engine", () => {
+describeIntegration("P2 — citation faithfulness: the answer engine", { postgres: true }, () => {
   let userId: string;
   let documentId: string;
   let conversationId: string;
