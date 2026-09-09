@@ -273,19 +273,25 @@ bucket costs a few extra requests and never an extra document or message.
 
 ### Dependencies
 
-`npm audit` reports no high-severity advisories. Two are pinned up through `overrides` in
-`package.json`, both transitive and both verified against the local-inference suite afterwards:
-`adm-zip` to 0.6.0 (a crafted ZIP triggering a 4 GB allocation, reached via `onnxruntime-node`) and
-`sharp` to 0.35.4 (libvips CVEs, reached via Transformers.js and never actually called — nothing here
-runs an image pipeline).
+Advisory databases move, so this records the state and the reasoning rather than a clean-bill claim.
 
-What remains is four moderate advisories on one dev-only chain,
-`drizzle-kit → @esbuild-kit → esbuild ≤ 0.24.2`: an advisory about esbuild's **development server**
-letting any website read its responses. `drizzle-kit` is a devDependency that generates and applies
-migrations; it is never part of a build output and never runs in production. The only offered fix is
-`drizzle-kit@0.18.1`, a major downgrade that would break the migration format the `drizzle/` directory
-is written in. Accepting a documented, unreachable dev-tool advisory is the better trade, and it is
-recorded here rather than left for someone to rediscover.
+**Patched:** `next` to 16.3.4, which closes two *critical* unauthenticated RCEs
+(GHSA-p293-qw3h-jr36 on Windows-hosted servers, and GHSA-2xp9-vwfh-vxw4 in the Image Optimization API
+on AVIF input) — a patch bump inside the pinned Next 16 line. `js-yaml` and `hono` are patched
+transitively. `adm-zip` is held at 0.6.0 through `overrides`, which closes the crafted-ZIP 4 GB
+allocation.
+
+**Not patched, and why:**
+
+| Advisory | Reachable? | Why it stays |
+| --- | --- | --- |
+| `sharp` ≤ 0.35.4-rc.0 (libvips/libheif) | No | Nested under `@huggingface/transformers`, which statically imports it but is only ever asked for text pipelines. Nothing in this app decodes an image. Forcing it up is a **major** bump past the `^0.34.5` its parent declares, on a native library — which was tried, and is a good way to take production down for a code path that never executes. |
+| `adm-zip` ≥ 0.5.9 (symlink extraction) | No | No fix exists at any version. Reached via `onnxruntime-node`, which extracts its own bundled artefacts, not anything a user supplies. |
+| `esbuild` ≤ 0.24.2 (dev server) | No | Dev-only, via `drizzle-kit`. Never in a build output, never runs in production. The only offered fix is `drizzle-kit@0.18.1`, a major downgrade that breaks the migration format `drizzle/` is written in. |
+
+The lesson from the `sharp` attempt is recorded because it cost a broken deployment: **a transitive native
+dependency that a parent package statically imports is not a version you get to choose freely.** See the
+*Local inference on Vercel* note in DEPLOY.md.
 
 ### What is not done
 

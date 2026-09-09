@@ -1,8 +1,4 @@
-import {
-  env as transformersEnv,
-  pipeline,
-  type FeatureExtractionPipeline,
-} from "@huggingface/transformers";
+import type { FeatureExtractionPipeline } from "@huggingface/transformers";
 
 import { env } from "@/lib/env";
 
@@ -130,6 +126,34 @@ function cacheDirectory(): string | undefined {
 }
 
 async function loadPipeline(): Promise<FeatureExtractionPipeline> {
+  /*
+   * IMPORTED HERE, NOT AT MODULE SCOPE. This is a deployment property, not a
+   * style preference.
+   *
+   * `@huggingface/transformers`'s Node build statically imports `sharp`, which
+   * is a native library, and it pulls in `onnxruntime-node`, which resolves
+   * prebuilt `.node` binaries by path. A STATIC import at the top of this file
+   * therefore makes loading a native stack a precondition for merely importing
+   * the module — and every route that transitively imports it inherits that.
+   *
+   * When one of those bindings cannot load, a static import fails during module
+   * evaluation, before any handler runs. Next.js answers that with a BLANK 500:
+   * no body, no message, and the same response for a malformed request as for a
+   * valid one. That is exactly what happened on the first deployment of this
+   * app — /api/chat and /api/ingest 500'd on every request while every route
+   * that did not touch this stack was fine, and nothing in the response said
+   * why.
+   *
+   * Deferring the import to here moves the failure to the first CALL, where
+   * `getPipeline` already turns it into an `EmbeddingError` carrying a sentence
+   * a person can read, the ingestion state machine records it against the
+   * document, and the retrieval layer can fall back. The singleton is
+   * unaffected — this function still runs exactly once per process.
+   */
+  const { env: transformersEnv, pipeline } = await import(
+    "@huggingface/transformers"
+  );
+
   const directory = cacheDirectory();
   if (directory) transformersEnv.cacheDir = directory;
 

@@ -1,9 +1,6 @@
-import {
-  AutoModelForSequenceClassification,
-  AutoTokenizer,
-  env as transformersEnv,
-  type PreTrainedModel,
-  type PreTrainedTokenizer,
+import type {
+  PreTrainedModel,
+  PreTrainedTokenizer,
 } from "@huggingface/transformers";
 
 import { env } from "@/lib/env";
@@ -108,6 +105,20 @@ let crossEncoderPromise: Promise<LoadedCrossEncoder> | null = null;
 
 function loadCrossEncoder(): Promise<LoadedCrossEncoder> {
   crossEncoderPromise ??= (async () => {
+    // Deferred for the same reason as the embedding pipeline: a static import
+    // of this package makes a native stack a precondition for importing THIS
+    // module, and a native binding that cannot load then becomes a blank 500 on
+    // every route that transitively imports it. See the long note in
+    // src/lib/embeddings/local.ts. Here it matters slightly less and is still
+    // worth having: reranking is optional, and retrieve() already falls back to
+    // RRF when it throws — so with the import deferred, a broken cross-encoder
+    // costs ranking quality instead of costing the whole endpoint.
+    const {
+      AutoModelForSequenceClassification,
+      AutoTokenizer,
+      env: transformersEnv,
+    } = await import("@huggingface/transformers");
+
     if (env.TRANSFORMERS_CACHE_DIR) {
       transformersEnv.cacheDir = env.TRANSFORMERS_CACHE_DIR;
     } else if (process.env.VERCEL) {

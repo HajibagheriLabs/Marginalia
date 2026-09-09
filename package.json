@@ -45,7 +45,7 @@
     "js-tiktoken": "1.0.21",
     "lucide-react": "1.33.0",
     "mammoth": "1.12.2",
-    "next": "16.3.1",
+    "next": "16.3.4",
     "next-themes": "0.4.6",
     "postgres": "3.4.9",
     "radix-ui": "1.6.7",
@@ -66,7 +66,7 @@
     "@types/react-dom": "19.2.4",
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.5",
-    "eslint-config-next": "16.3.1",
+    "eslint-config-next": "16.3.4",
     "shadcn": "4.18.0",
     "tailwindcss": "4.3.3",
     "tsx": "4.23.12",
@@ -75,8 +75,7 @@
     "vitest": "4.1.11"
   },
   "overrides": {
-    "adm-zip": "0.6.0",
-    "sharp": "0.35.4"
+    "adm-zip": "0.6.0"
   },
   "allowScripts": {
     "esbuild@0.18.20": true,
@@ -84,6 +83,8 @@
     "esbuild@0.28.2": true,
     "onnxruntime-node@1.24.3": true,
     "protobufjs@7.6.6": true,
+    "sharp@0.34.5": true,
+    "sharp@0.35.4": true,
     "unrs-resolver@1.12.2": true
   }
 }
