@@ -186,9 +186,12 @@ Three things about it are load-bearing:
 - **Only `linux/x64`.** `onnxruntime-node` ships every platform's binaries in one 220 MB tarball. A
   `bin/**` glob would put all of it into every function listed, past the **250 MB uncompressed** limit a
   Hobby function has. The Linux x64 directory is 34 MB and is the only one a function can execute.
-- **`/app/**` is not optional.** `startIngestion` runs the *first* pipeline pass inline via `after()` in
-  the upload Server Action's own function; only continuations go over HTTP to `/api/ingest`. Omit it and
-  a document small enough to finish in one pass becomes the only kind that fails.
+- **Exact route keys only — do not add a glob.** An earlier version added a third key, `/app/**`, so the
+  upload Server Action could run the first pipeline pass inline. That made the Vercel build **compile
+  and then fail while deploying its outputs**, with the previous deployment left live — so from outside
+  the symptom was indistinguishable from "the fix does not work". Removing that one key made the deploy
+  green. `startIngestion` now hands every pass to `/api/ingest` over HTTP instead, which costs one round
+  trip per document and keeps the native stack in exactly two functions.
 - **Verify it locally rather than by deploying.** After `npm run build`:
 
   ```bash
@@ -196,6 +199,17 @@ Three things about it are load-bearing:
   ```
 
   An empty array means the include did not match and the deploy will fail at runtime.
+
+- **Confirm the deployment actually shipped.** Every response carries `X-Build-Sha`. A build that
+  compiles and then fails while deploying leaves the *previous* deployment serving traffic, so the site
+  keeps working and your fix silently is not there:
+
+  ```bash
+  curl -sI <url>/api/auth/get-session | grep -i x-build-sha
+  ```
+
+  Check an uncached route — a CDN `HIT` on the landing page replays the headers from whenever it was
+  cached, which will happily show you a stale answer.
 
 ### A related trap: do not force a transitive native dependency's version
 

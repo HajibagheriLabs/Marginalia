@@ -3,7 +3,6 @@ import { after } from "next/server";
 import type { DocumentStatus } from "@/db/schema";
 
 import { enqueueIngestion } from "./enqueue";
-import { PIPELINE_BUDGET_MS, runPipeline } from "./pipeline";
 
 /**
  * The single place ingestion is triggered from.
@@ -15,39 +14,42 @@ import { PIPELINE_BUDGET_MS, runPipeline } from "./pipeline";
  * want the same thing — "start moving this document" — and neither should know
  * how many invocations that will take.
  *
- * WHY `after()` FOR THE FIRST HOP. Extraction reads the whole file and parses
- * it, which takes long enough to be felt. Running it inline would hold the
- * upload's Server Action open while a 100-page PDF is parsed, so the browser
- * would sit at "Finishing" for seconds after the bytes had already landed.
- * `after()` runs the work once the response has been sent, in the same
- * invocation — which on Fluid Compute is exactly what it is for. A plain
- * floating promise would not do: a serverless function can be frozen the moment
- * it responds, and the work would stop mid-parse.
+ * ───────────────────────────────────────────────────────────────────────────
+ * EVERY PASS RUNS IN THE INGESTION ROUTE, INCLUDING THE FIRST.
  *
- * The first invocation therefore runs in the action's own function, and only
- * the continuations go over HTTP. That saves a round trip for the common case —
- * a small document that finishes in one pass never touches the route at all.
+ * This used to run the first pass INLINE, in the calling Server Action's own
+ * function via `after()`, so that a small document finishing in one pass never
+ * paid for an HTTP round trip. That was a good optimisation and it is gone for
+ * a concrete deployment reason.
  *
- * The trade-off is that a failure here is not reported to the caller. It is
- * recorded on the document — `status: failed`, `failed_stage`, and a message —
- * and surfaced in the rail and the reading pane, which is where a background
- * job's failure belongs anyway.
+ * The embedding stage needs ONNX Runtime, whose shared library has to be named
+ * explicitly in `outputFileTracingIncludes` — the file tracer cannot see it,
+ * because the native addon `dlopen`s it and no JavaScript ever references it.
+ * Naming it for the two API routes works. Naming it for the app routes as well,
+ * which is what running inline required, made the Vercel build compile and then
+ * fail while deploying its outputs.
+ *
+ * So the native stack now lives in exactly two functions — `/api/chat` and
+ * `/api/ingest` — and everything else stays free of it. What that buys, beyond
+ * a deploy that works: the page functions no longer carry 34 MB of binaries
+ * they never execute, and there is one place where inference happens rather
+ * than two.
+ *
+ * WHAT IT COSTS: one HTTP round trip before a document starts moving. The route
+ * answers 202 as soon as it has authenticated and scheduled the run, so this is
+ * milliseconds, and it is paid once per document rather than per pass.
+ *
+ * `after()` still wraps the call so the upload response is not held open by it,
+ * and a failure to schedule is logged rather than thrown — the document simply
+ * stays in `uploaded` with its "Retry" action intact. Stalling is recoverable;
+ * turning a successful upload into an error is not.
  */
 export async function startIngestion(
   documentId: string,
   userId: string,
 ): Promise<void> {
   after(async () => {
-    try {
-      await runPipeline(documentId, userId, {
-        budgetMs: PIPELINE_BUDGET_MS,
-        // When this invocation runs out of budget, the rest happens in fresh
-        // ones. See enqueue.ts — this is the seam a real queue replaces.
-        onContinue: enqueueIngestion,
-      });
-    } catch (error) {
-      console.error(`[ingest] pipeline crashed for ${documentId}`, error);
-    }
+    await enqueueIngestion(documentId, userId);
   });
 }
 

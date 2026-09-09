@@ -23,21 +23,52 @@ const nextConfig: NextConfig = {
     "sharp",
   ],
 
-  /*
-   * BISECT IN PROGRESS — `outputFileTracingIncludes` temporarily removed.
-   *
-   * It is what puts `libonnxruntime.so.1` into the functions that need it (the
-   * tracer cannot see it: the native addon dlopens it, so no JavaScript ever
-   * names it). Verified correct in the local trace manifest, and the Vercel
-   * build compiles fine with it — but the deploy then fails in the "Deploying
-   * outputs" phase, and with the previous deployment staying live there is no
-   * way from outside to tell which of the two it is.
-   *
-   * Removing it alone answers that: a green build means this directive is the
-   * trigger and its form needs changing; a red build means the failure is
-   * somewhere else entirely and this was never the cause. It goes straight back
-   * either way — without it, /api/chat and /api/ingest cannot load ONNX.
+  /**
+   * ┌────────────────────────────────────────────────────────────────────────┐
+   * │ THE SHARED LIBRARY THE FILE TRACER CANNOT SEE.                         │
+   * │                                                                        │
+   * │ `serverExternalPackages` above keeps `onnxruntime-node` out of the     │
+   * │ bundle, so its prebuilt addon is required from node_modules at         │
+   * │ runtime. Vercel then decides which files ship with each function by    │
+   * │ TRACING module references — a static analysis over JavaScript. It      │
+   * │ finds `onnxruntime_binding.node`, because JS requires it by path. It   │
+   * │ cannot find `libonnxruntime.so.1`, because nothing in JavaScript ever  │
+   * │ names it: the addon `dlopen`s it itself at load time.                  │
+   * │                                                                        │
+   * │ So the addon shipped and the library it links against did not, and     │
+   * │ every question and every ingestion failed in production with           │
+   * │                                                                        │
+   * │     libonnxruntime.so.1: cannot open shared object file                │
+   * │                                                                        │
+   * │ which is invisible from every angle locally: the file is present in    │
+   * │ node_modules on a developer machine, and `next build` succeeds because │
+   * │ tracing is not a correctness check.                                    │
+   * │                                                                        │
+   * │ ── TWO CONSTRAINTS ON THE FIX, BOTH LEARNED THE HARD WAY ─────────────  │
+   * │                                                                        │
+   * │ ONLY linux/x64. The package ships every platform's binaries in one     │
+   * │ 220 MB tarball; a `bin/**` glob would put all of it into every         │
+   * │ function named here. The Linux x64 directory is 34 MB and is the only  │
+   * │ one a function can execute.                                            │
+   * │                                                                        │
+   * │ ONLY EXACT ROUTE KEYS. An earlier version added a third key, `/app/**`,│
+   * │ so that the upload Server Action would have the library too. That      │
+   * │ made the Vercel BUILD COMPILE AND THEN FAIL while deploying its        │
+   * │ outputs — with the previous deployment left live, so from outside the  │
+   * │ symptom was indistinguishable from "the fix does not work". Removing   │
+   * │ that one key is what made the deploy green again. Add keys here only   │
+   * │ as exact route paths, and confirm the deployment actually shipped —    │
+   * │ the X-Build-Sha header exists for precisely that check.                │
+   * │                                                                        │
+   * │ VERIFY LOCALLY, not by deploying:                                      │
+   * │   node -e "console.log(require('./.next/server/app/api/chat/route.js\  │
+   * │     .nft.json').files.filter(f=>f.includes('libonnxruntime')))"        │
+   * └────────────────────────────────────────────────────────────────────────┘
    */
+  outputFileTracingIncludes: {
+    "/api/chat": ["./node_modules/onnxruntime-node/bin/napi-v6/linux/x64/**"],
+    "/api/ingest": ["./node_modules/onnxruntime-node/bin/napi-v6/linux/x64/**"],
+  },
 
   /**
    * ┌────────────────────────────────────────────────────────────────────────┐
