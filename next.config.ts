@@ -75,6 +75,61 @@ const nextConfig: NextConfig = {
   },
 
   /**
+   * ┌────────────────────────────────────────────────────────────────────────┐
+   * │ WHAT MUST NEVER BE TRACED INTO A FUNCTION.                             │
+   * │                                                                        │
+   * │ 1. THE LIBRARY'S OWN WEIGHTS CACHE. Transformers.js defaults its cache │
+   * │    to `node_modules/@huggingface/transformers/.cache`, and anything    │
+   * │    that has ever run a model locally — `npm test`, the eval harness,   │
+   * │    the seed — leaves 57 MB of `.onnx` weights sitting there. The       │
+   * │    tracer has no idea those are a cache; it sees files inside a        │
+   * │    package the function depends on and ships them.                     │
+   * │                                                                        │
+   * │    Vercel installs fresh, so today that directory is empty there and   │
+   * │    the weights are downloaded to /tmp at runtime as intended. Two      │
+   * │    things still make this worth excluding: Vercel caches node_modules  │
+   * │    between builds, so the day something populates it the functions     │
+   * │    grow 57 MB with no diff to explain it — and, more immediately, a    │
+   * │    size measured locally is 57 MB wrong, which is exactly the kind of  │
+   * │    misleading number you reach for when a deploy fails on size.        │
+   * │                                                                        │
+   * │ 2. BINARIES FOR PLATFORMS A VERCEL FUNCTION CANNOT EXECUTE. Both       │
+   * │    `onnxruntime-node` and `sharp` ship per-platform native code. Only  │
+   * │    linux/x64 can ever run here; macOS, Windows and every ARM variant   │
+   * │    are pure weight. Excluding them is safe in a way that guessing at   │
+   * │    a size budget is not: if one of these were ever needed, the build   │
+   * │    would fail loudly rather than ship something subtly wrong.          │
+   * └────────────────────────────────────────────────────────────────────────┘
+   */
+  outputFileTracingExcludes: {
+    "**": [
+      // A developer machine's downloaded weights. Runtime fetches to /tmp.
+      "./node_modules/@huggingface/transformers/.cache/**",
+      // ONNX Runtime for platforms a function cannot execute.
+      "./node_modules/onnxruntime-node/bin/napi-v6/darwin/**",
+      "./node_modules/onnxruntime-node/bin/napi-v6/win32/**",
+      "./node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/**",
+      // sharp, likewise. It is imported by Transformers.js and never called.
+      "./node_modules/**/@img/sharp-darwin-*/**",
+      "./node_modules/**/@img/sharp-win32-*/**",
+      "./node_modules/**/@img/sharp-linuxmusl-*/**",
+      "./node_modules/**/@img/sharp-linux-arm*/**",
+      "./node_modules/**/@img/sharp-linux-ppc64/**",
+      "./node_modules/**/@img/sharp-linux-riscv64/**",
+      "./node_modules/**/@img/sharp-linux-s390x/**",
+      "./node_modules/**/@img/sharp-libvips-darwin-*/**",
+      "./node_modules/**/@img/sharp-libvips-linuxmusl-*/**",
+      "./node_modules/**/@img/sharp-libvips-linux-arm*/**",
+      "./node_modules/**/@img/sharp-libvips-linux-ppc64/**",
+      "./node_modules/**/@img/sharp-libvips-linux-riscv64/**",
+      "./node_modules/**/@img/sharp-libvips-linux-s390x/**",
+      "./node_modules/**/@img/sharp-wasm32/**",
+      "./node_modules/**/@img/sharp-webcontainers-wasm32/**",
+      "./node_modules/**/@img/sharp-freebsd-wasm32/**",
+    ],
+  },
+
+  /**
    * SECURITY HEADERS ON EVERY RESPONSE, INCLUDING STATIC ASSETS.
    *
    * The table itself is in src/lib/security-headers.ts, where it can be read
