@@ -233,6 +233,27 @@ Traced sizes for this app with the include in place, against a 250 MB limit:
 
 Regenerate the table any time with the script in step 7's verification note.
 
+### Measured on this deployment
+
+Taken against `marginalia-lake-six.vercel.app` (Hobby + Fluid Compute, `iad1`), through the shipping
+`/api/chat` path with `RETRIEVAL_RERANKER=local`:
+
+| | |
+| --- | --- |
+| Cold start — first question on a new instance | **42.4 s** end to end |
+| Warm — same instance, subsequent questions | **27.1 s / 28.8 s** end to end |
+| Server-recorded `latency_ms` (warm) | 23.5 s / 26.9 s |
+| Model | `nvidia/nemotron-3.5-lightning:free` |
+| Tokens | 3,360 in / 933–1,920 out |
+| Cost | **0 cents** — the real number, not an estimate |
+| Invalid citation markers | **0** |
+
+The cold/warm delta is ~15 s, which is the ~34 MB weights download plus the ONNX session build. It is
+paid once per instance, not per request. Most of the *warm* time is the free model generating, not
+retrieval — the free pool is shared and slow, and a 1,920-token answer is most of half a minute on its
+own. No function ran out of memory at any point, and the two functions carrying the native stack trace
+to ~53 MB against a 250 MB limit.
+
 ### Model weights and the cache directory
 
 Do **not** set `TRANSFORMERS_CACHE_DIR`. Transformers.js defaults to a directory inside `node_modules`,
@@ -360,7 +381,40 @@ The demo account has a lower question cap so one visitor cannot spend the shared
 
 ---
 
-## 11. Known rough edges
+## 11. What this deployment has and has not been verified to do
+
+**Verified live**, on `marginalia-lake-six.vercel.app`:
+
+- Landing page, with every security header and the CSP present on the response.
+- `/demo` signs in and lands on a populated conversation; the Evidence Rail carries 31 marks before you
+  type anything.
+- A question streams a grounded answer with citation markers and **zero invalid markers**.
+- Clicking a citation scrolls the viewer to the passage and inks it in citrine.
+- "Show retrieval" expands to real numbers — `Dense #1 0.818 | Lexical #1 0.050 | RRF 0.0328 |
+  Rerank 8.3 | used: yes`.
+- The cost readout reads `$0.00 · free tier` with real token counts.
+- The daily question limit produces the limit **dialog**, naming the ceiling and the reset time, rather
+  than an error.
+- The demo account has no file input and its uploads are refused server-side (`/api/blob/upload` → 403).
+- Both themes, and 375 px. `--paper` is byte-identical in both rooms, which is the design invariant.
+
+**NOT verified live, and why:**
+
+- **Sign-up and the upload path.** `requireEmailVerification` is on and no mail provider is configured,
+  so the verification link only reaches the server log. Working around it means writing
+  `emailVerified = true` straight into the production database, which is a change to real data rather
+  than a test, so it has not been done. **This is the one gap that matters**, because it is the path
+  that changed most: `startIngestion` now hands every pass to `/api/ingest` over HTTP instead of running
+  the first one inline. The pieces are individually proven — `/api/ingest` carries the same
+  `outputFileTracingIncludes` entry as `/api/chat`, which is confirmed loading ONNX in production, and
+  `enqueueIngestion` is the same function that already schedules every continuation — but the whole
+  upload → five stages → `ready` sequence has not been run in production.
+- **Answer quality.** That is the eval harness's job, and it has not been re-run since the corpus was
+  seeded.
+
+---
+
+## 12. Known rough edges
 
 - **The demo workspace's "Download original" returns 404.** Its documents are seeded from committed text
   and never had a stored file, so there are no bytes to serve. The route reports that correctly.
