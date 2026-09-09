@@ -23,56 +23,21 @@ const nextConfig: NextConfig = {
     "sharp",
   ],
 
-  /**
-   * ┌────────────────────────────────────────────────────────────────────────┐
-   * │ THE SHARED LIBRARY THE FILE TRACER CANNOT SEE.                         │
-   * │                                                                        │
-   * │ `serverExternalPackages` above keeps `onnxruntime-node` out of the     │
-   * │ bundle so its prebuilt `.node` addon is required from node_modules at  │
-   * │ runtime. Vercel then decides which files ship with each function by    │
-   * │ TRACING module references — and tracing is a static analysis over      │
-   * │ JavaScript. It finds `onnxruntime_binding.node`, because JS requires   │
-   * │ it by path. It cannot find `libonnxruntime.so.1`, because nothing in   │
-   * │ JavaScript ever names it: the addon `dlopen`s it itself, from its own  │
-   * │ directory, at load time.                                               │
-   * │                                                                        │
-   * │ So the addon ships and the library it links against does not, and the  │
-   * │ deployed function fails with:                                          │
-   * │                                                                        │
-   * │     libonnxruntime.so.1: cannot open shared object file                │
-   * │                                                                        │
-   * │ This is invisible locally in every direction. The file is present in   │
-   * │ `node_modules` on a developer machine, so nothing fails; `next build`  │
-   * │ succeeds because tracing is not a correctness check; and the only      │
-   * │ symptom is a runtime error inside a deployed function.                 │
-   * │                                                                        │
-   * │ ONLY linux/x64 IS INCLUDED, and the specificity is load-bearing.       │
-   * │ `onnxruntime-node` ships every platform's binaries in one tarball —    │
-   * │ 211 MB of them — and a `bin/**` glob would put all of it into every    │
-   * │ function listed here, past the 250 MB uncompressed limit a Hobby       │
-   * │ function has. The Linux x64 directory alone is 34 MB, which is the     │
-   * │ only one a Vercel function can execute anyway.                         │
-   * │                                                                        │
-   * │ WHY THESE THREE KEYS. `/api/chat` embeds the query and reranks;        │
-   * │ `/api/ingest` runs the pipeline; and `/app/**` needs it because        │
-   * │ `startIngestion` runs the FIRST pipeline pass inline via `after()` in  │
-   * │ the upload Server Action's own function, and only continuations go     │
-   * │ over HTTP to the route. Omitting the last one would make a small       │
-   * │ document — one that finishes in a single pass and never reaches        │
-   * │ /api/ingest — the only kind that fails.                                │
-   * └────────────────────────────────────────────────────────────────────────┘
+  /*
+   * BISECT IN PROGRESS — `outputFileTracingIncludes` temporarily removed.
+   *
+   * It is what puts `libonnxruntime.so.1` into the functions that need it (the
+   * tracer cannot see it: the native addon dlopens it, so no JavaScript ever
+   * names it). Verified correct in the local trace manifest, and the Vercel
+   * build compiles fine with it — but the deploy then fails in the "Deploying
+   * outputs" phase, and with the previous deployment staying live there is no
+   * way from outside to tell which of the two it is.
+   *
+   * Removing it alone answers that: a green build means this directive is the
+   * trigger and its form needs changing; a red build means the failure is
+   * somewhere else entirely and this was never the cause. It goes straight back
+   * either way — without it, /api/chat and /api/ingest cannot load ONNX.
    */
-  outputFileTracingIncludes: {
-    "/api/chat": [
-      "./node_modules/onnxruntime-node/bin/napi-v6/linux/x64/**",
-    ],
-    "/api/ingest": [
-      "./node_modules/onnxruntime-node/bin/napi-v6/linux/x64/**",
-    ],
-    "/app/**": [
-      "./node_modules/onnxruntime-node/bin/napi-v6/linux/x64/**",
-    ],
-  },
 
   /**
    * ┌────────────────────────────────────────────────────────────────────────┐
