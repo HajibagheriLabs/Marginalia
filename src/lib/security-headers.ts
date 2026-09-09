@@ -154,6 +154,31 @@ export interface SecurityHeader {
 }
 
 /**
+ * The commit this build was produced from, if the platform told us.
+ *
+ * WHY THIS EARNS A HEADER. Diagnosing a deployed application starts with one
+ * question — "is the code I am looking at the code that is running?" — and
+ * without an answer every other conclusion is provisional. That is not
+ * hypothetical here: a config-only fix produced no observable change, and there
+ * was no way from outside to tell "the fix does not work" from "the build never
+ * shipped". Those two need completely different responses, and guessing between
+ * them wastes deploy cycles.
+ *
+ * `VERCEL_GIT_COMMIT_SHA` is set by the platform at build time. `next.config.ts`
+ * is evaluated during the build, so the value is baked into the header table
+ * rather than read per request.
+ *
+ * It is not sensitive. The repository is public, and a commit SHA of a public
+ * repo tells an attacker what the source already tells them. On a private
+ * codebase this would be a version number instead.
+ */
+function buildSha(): string | null {
+  const sha =
+    process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.GIT_COMMIT_SHA ?? null;
+  return sha ? sha.slice(0, 7) : null;
+}
+
+/**
  * Every security header this application sends, on every route.
  *
  * HSTS is the one header here that can lock a domain out of plain HTTP for two
@@ -170,7 +195,10 @@ export interface SecurityHeader {
 export function securityHeaders(
   isProduction: boolean = process.env.NODE_ENV === "production",
 ): SecurityHeader[] {
+  const sha = buildSha();
+
   return [
+    ...(sha ? [{ key: "X-Build-Sha", value: sha }] : []),
     {
       key: "Content-Security-Policy",
       value: contentSecurityPolicy(isProduction),
