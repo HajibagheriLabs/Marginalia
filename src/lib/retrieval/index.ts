@@ -3,6 +3,7 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import { chunks, documents } from "@/db/schema";
 import {
+  EmbeddingError,
   EmbeddingSpaceError,
   assertSameEmbeddingSpace,
   getEmbeddingProvider,
@@ -131,7 +132,39 @@ export async function retrieve(
 
   // ── 2 & 3. THE TWO CHANNELS, concurrently ───────────────────────────────
   const embedStartedAt = Date.now();
-  const queryVector = await embeddings.embedQuery(query);
+  /*
+   * AN EMBEDDING FAILURE IS A RETRIEVAL FAILURE, AND IT MUST SAY SO.
+   *
+   * Without this wrapper an `EmbeddingError` propagates past `answer()` — which
+   * re-throws anything that is not a `RetrievalError` — and out to the chat
+   * route's `onError`, whose whole job is to mask stack-adjacent strings. The
+   * result is that the ONE error in this system with a sentence written
+   * specifically for a person ("the weights cache directory is not writable —
+   * set TRANSFORMERS_CACHE_DIR", "the weights could not be downloaded") is the
+   * one error nobody ever sees. It arrives as "That answer could not be
+   * completed. Try asking again."
+   *
+   * That is not a hypothetical: it is how the first production deployment
+   * presented a completely broken local-inference stack — a generic retry
+   * message, on a failure no amount of retrying would clear.
+   *
+   * The message is safe to show. `describeLoadFailure` in
+   * src/lib/embeddings/local.ts turns the two operational causes into
+   * instructions and passes anything else through as the model host's own text;
+   * none of it is a stack trace and none of it names a secret.
+   */
+  let queryVector: number[];
+  try {
+    queryVector = await embeddings.embedQuery(query);
+  } catch (error) {
+    if (error instanceof EmbeddingError) {
+      throw new RetrievalError(
+        `The search index could not be reached. ${error.message}`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
   const embedMs = Date.now() - embedStartedAt;
 
   const denseStartedAt = Date.now();
