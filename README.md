@@ -39,32 +39,33 @@ Two more, because they are the parts that are usually hidden:
 
 ## Architecture
 
+**Ingestion** — once per document, resumable, each stage idempotent:
+
 ```mermaid
-flowchart TB
-    subgraph ingest["INGESTION — once per document, resumable"]
-        direction LR
-        U["upload<br/><i>browser → Blob</i>"] --> E["extract<br/><i>unpdf / mammoth</i>"]
-        E --> C["chunk<br/><i>structure-first, ~260 tok</i>"]
-        C --> M["embed<br/><i>bge-small, local ONNX</i>"]
-        M --> X["index<br/><i>upsert to Qdrant</i>"]
-        X --> R(["ready"])
-    end
+flowchart LR
+    U["upload<br/><i>browser → Blob</i>"] --> E["extract<br/><i>unpdf / mammoth</i>"]
+    E --> C["chunk<br/><i>structure-first, ~260 tok</i>"]
+    C --> M["embed<br/><i>bge-small, local ONNX</i>"]
+    M --> X["index<br/><i>upsert to Qdrant</i>"]
+    X --> R(["ready"])
+```
 
-    subgraph query["QUERY — once per question"]
-        direction TB
-        Q["question"] --> D["dense top-50<br/><i>Qdrant, filtered by user + docs</i>"]
-        Q --> L["lexical top-50<br/><i>Postgres FTS, two-pass</i>"]
-        D --> F["RRF fusion<br/><i>k = 60</i>"]
-        L --> F
-        F --> RR["rerank<br/><i>cross-encoder, raw logits</i>"]
-        RR --> A["assemble top 8<br/><i>numbered, fenced passages</i>"]
-        A --> G["generate<br/><i>streamed, grounded</i>"]
-        G --> V["validate citations<br/><i>strip invented markers</i>"]
-        V --> ANS(["answer + trace"])
-    end
+Chunk **text** and its `tsvector` land in Postgres; chunk **vectors** land in Qdrant. Both are keyed by
+the same `chunk_id`, which is what lets the two query channels below be fused.
 
-    R -. "chunks + vectors" .-> D
-    R -. "chunk text + tsvector" .-> L
+**Query** — once per question:
+
+```mermaid
+flowchart LR
+    Q["question"] --> D["dense top-50<br/><i>Qdrant, filtered<br/>by user + docs</i>"]
+    Q --> L["lexical top-50<br/><i>Postgres FTS<br/>two-pass</i>"]
+    D --> F["RRF fusion<br/><i>k = 60</i>"]
+    L --> F
+    F --> RR["rerank<br/><i>cross-encoder<br/>raw logits</i>"]
+    RR --> A["assemble top 8<br/><i>numbered, fenced</i>"]
+    A --> G["generate<br/><i>streamed, grounded</i>"]
+    G --> V["validate citations<br/><i>strip invented markers</i>"]
+    V --> ANS(["answer + trace"])
 ```
 
 Both channels run concurrently. Every dense search carries a payload filter on `user_id` **and** the selected `document_ids` — that filter lives inside a single `search()` helper and no call site may build its own query, because a vector search without it silently returns other users' documents.
