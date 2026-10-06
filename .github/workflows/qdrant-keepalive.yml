@@ -1,0 +1,64 @@
+name: Qdrant keep-alive
+
+# A free Qdrant Cloud cluster is suspended after a stretch of inactivity and
+# deleted three weeks after that. Any authenticated API call resets the
+# inactivity timer, so this job makes one on a schedule.
+#
+# It runs twice a week rather than once. Scheduled workflows are best-effort:
+# GitHub delays them under load and occasionally drops one, so a single weekly
+# run turns one lost trigger into a lapse. Monday and Thursday leave a worst-case
+# gap of four days, comfortably inside a seven-day window.
+#
+# Two repository secrets are required (Settings → Secrets and variables →
+# Actions): QDRANT_URL and QDRANT_API_KEY, the same values as in .env.local.
+#
+# GitHub also switches scheduled workflows off after 60 days without any
+# repository activity. If the cluster ever gets the suspension warning anyway,
+# check the Actions tab for a "disabled" banner and re-enable it there.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1,4" # 06:17 UTC; off the hour, when the scheduler is busiest
+  workflow_dispatch: # run it by hand from the Actions tab to test the secrets
+
+# The job checks nothing out and writes nothing back, so it gets no token scopes.
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Query the cluster
+        env:
+          QDRANT_URL: ${{ secrets.QDRANT_URL }}
+          QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          # A missing secret expands to an empty string, which curl would report
+          # as a malformed URL. Say what is actually wrong instead.
+          if [ -z "${QDRANT_URL:-}" ] || [ -z "${QDRANT_API_KEY:-}" ]; then
+            echo "::error::Set the QDRANT_URL and QDRANT_API_KEY repository secrets."
+            exit 1
+          fi
+
+          # Retries cover a transient network failure or a 5xx from the edge, so
+          # one bad packet does not page anybody. The URL is a secret and is
+          # masked in the log; so is the key.
+          body="$(mktemp)"
+          status="$(curl --silent --show-error \
+            --max-time 30 --retry 3 --retry-delay 10 --retry-all-errors \
+            --header "api-key: ${QDRANT_API_KEY}" \
+            --output "${body}" --write-out '%{http_code}' \
+            "${QDRANT_URL%/}/collections")"
+          echo "GET /collections -> HTTP ${status}"
+
+          if [ "${status}" != "200" ]; then
+            echo "::error::Qdrant answered HTTP ${status}. The cluster may already be suspended, or the API key was rotated."
+            exit 1
+          fi
+
+          # Log how many collections came back, not their names: this repository
+          # is public and the log is too.
+          echo "Cluster is up: $(jq '.result.collections | length' "${body}") collection(s)."
